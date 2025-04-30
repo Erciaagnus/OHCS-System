@@ -1,0 +1,5 @@
+## Pre-Build
+**/build
+**/devel
+**/logs
+**/.catkin_tools
