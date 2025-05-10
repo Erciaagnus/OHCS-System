@@ -1,7 +1,7 @@
 # ROS 2 build artifacts
-/build
-/install
-/log
+**/build
+**/install
+**/log
 
 # VSCode or other IDE files
 .vscode/
@@ -14,4 +14,14 @@
 ## WORLD File
 **/src/parking_lot/worlds/environment/parking_lot
 **/src/parking_lot/worlds/environment/
-*/.jpg
+*.jpg
+*.gif
+*.FBX
+*.mtl
+*.obj
+*.blend
+*.fbx
+*.mat
+*.rps
+*.png
+*.tga
