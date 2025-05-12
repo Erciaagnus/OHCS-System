@@ -9,5 +9,11 @@ def generate_launch_description():
             name = 'map_visualizer_node',
             output='screen' #setup.py name
 
+        ),
+        Node(
+            package = 'parking_world',
+            executable='rail_publisher',
+            name = 'rail_publisher_node',
+            output='screen' #setup.py name
         )
     ])

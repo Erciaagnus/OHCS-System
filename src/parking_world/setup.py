@@ -22,6 +22,7 @@ setup(
     entry_points={
         'console_scripts': [
             'map_visualizer = parking_world.map_visualizer:main',
+            'rail_publisher = parking_world.rail_publisher:main',
         ],
     },
 )
