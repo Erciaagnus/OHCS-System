@@ -41,8 +41,8 @@ class ParkingLotVisualizer(Node):
     def publish_markers(self):
         try:
             spot_w, spot_h = 2.3, 5.1
-            block_spacing_x = 2.0
-            block_spacing_y = 2.0
+            block_spacing_x = 5.0
+            block_spacing_y = 5.0
             marker_id = 0
 
             # 주차칸 선(Line List) 마커 생성
