@@ -1,0 +1,61 @@
+# OHCS (Overhead Charging System) Simulation Project
+
+## 🔧 Project Overview
+The **OHCS Project** (Overhead Hoist Charging System) is an autonomous charging platform for electric vehicles (EVs), simulated in a virtual environment using **Gazebo** and **ROS Noetic**.
+
+Our system moves a charger along ceiling-mounted rails toward a parked EV based on user position input. Once the vehicle is fully charged, the system **automatically detaches** the charger. Charger attachment must be done manually for now.
+
+Future expansion includes **manipulator arm integration** for fully automated charging.
+
+## 🧠 Project Goals
+- Develop a simulation model of OHCS in a 3D environment using **Gazebo**.
+- Design a rail-based EV charger transport mechanism.
+- Implement autonomous detachment logic upon full charge.
+- Support for future manipulator extension to achieve full automation.
+- Evaluate multi-user scalability and spatial task scheduling.
+
+## 📅 Timeline
+- **Start**: March 2025  
+- **End**: June 2025
+
+## 👥 Team Members
+| Name | Role |
+|------|------|
+| JeongHyeok Lim | Team Leader / PM / Software Design / ROS Integration / Mechanical Design |
+| Jinkwon Park | Software Design |
+| Member B | Mechanical Design |
+| Member C | Mechanical Design |
+| Member D | Mechanical Design |
+
+## 🛠️ Technologies
+- **Simulation**: Gazebo 11
+- **Middleware**: ROS Noetic
+- **Programming Language**: Python, C++
+- **OS**: Ubuntu 20.04 LTS
+- **Version Control**: Git + GitHub
+- **Future Hardware Planning**: Robotic manipulator (e.g., UR5 or equivalent)
+
+## 📂 Repository Structure (Tentative)
+
+## ⚙️ Planned Features
+- [x] Rail-based movement with coordinate tracking
+- [x] EV position sensing (placeholder for vision/marker)
+- [x] Charging simulation logic
+- [ ] Auto-detachment after full charge
+- [ ] ROS service interface for control
+- [ ] Multi-user queueing logic (planned)
+- [ ] Manipulator integration (future)
+
+## 📢 Licensing
+This project uses the **Creative Commons Attribution-NonCommercial 4.0 International (CC BY-NC 4.0)** license.  
+> You may share and adapt the work, but **commercial use is strictly prohibited**.  
+> See [LICENSE](https://creativecommons.org/licenses/by-nc/4.0/) for more details.
+
+## 🚀 Getting Started (To be added)
+Installation, build, and launch instructions will be updated once simulation nodes and controllers are implemented.
+
+## 📞 Contact
+For inquiries, collaboration, or bug reports, contact: +82 10 2232 6276
+JeongHyeok Lim – [henricus0973@korea.ac.kr](mailto:henricus0973@korea.ac.kr)
+
+---
