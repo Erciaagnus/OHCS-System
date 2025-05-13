@@ -9,6 +9,9 @@ import numpy as np
 from nav_msgs.msg import Path
 from geometry_msgs.msg import PoseStamped
 import json
+from typing import Optional
+from visualization_msgs.msg import MarkerArray
+
 class RailNode():
     def __init__(self, id, x, y):
         self.id = id # ex. "A1", "N1" 처럼 고유 식별자
@@ -29,6 +32,7 @@ class RailMap:
         self.segments = {} # id->RailSegment
         self._coord2id = {} #(x,y) -> id
         self._next_node_idx = 1
+        self.radius = 1.2
     def add_node(self, x:float, y:float, name: str = None )->str:
         """
         - 소수점 셋째 자리까지 반올림한 (x,y) 좌표를 키로 중복 방지
@@ -46,10 +50,56 @@ class RailMap:
             self.nodes[nid] = RailNode(nid, x, y)
         return self._coord2id[key]
 
-    def add_segment(self, start_id:str, end_id:str, pts, typ = 'straight') -> str:
+    def add_segment(self, start_id:str, end_id:str, typ = 'straight', dir:str = None, pts : Optional[list]=None) -> str:
         """
         -start points, endpoints, type -> self.segments, connected info
         """
+        if pts is None:
+            start_xy = [self.nodes[start_id].x, self.nodes[start_id].y]
+            end_xy = [self.nodes[end_id].x, self.nodes[end_id].y]
+            if typ == 'straight':
+                pts = generate_straight(start_xy, end_xy)
+            elif typ == 'curve':
+                dx = end_xy[0] - start_xy[0]
+                dy = end_xy[1] - start_xy[1]
+                if dir == "up":
+                    if dx > 0 and dy > 0:
+                        center = [end_xy[0], start_xy[1]]
+                        start_angle = math.pi / 2
+                        end_angle = math.pi
+                    elif dx > 0 and dy < 0:
+                        center = [start_xy[0], end_xy[1]]
+                        start_angle = 0
+                        end_angle = math.pi / 2
+                    elif dx < 0 and dy > 0:
+                        center = [end_xy[0], start_xy[1]]
+                        start_angle = 0
+                        end_angle = math.pi / 2
+                    elif dx < 0 and dy < 0:
+                        center = [start_xy[0], end_xy[1]]
+                        start_angle = math.pi / 2
+                        end_angle = math.pi
+                elif dir == "down":
+                    if dx > 0 and dy > 0:
+                        center = [start_xy[0], end_xy[1]]
+                        start_angle = math.pi * 3 / 2
+                        end_angle = math.pi * 2
+                    elif dx > 0 and dy < 0:
+                        center = [end_xy[0], start_xy[1]]
+                        start_angle = math.pi
+                        end_angle = math.pi * 3 / 2
+                    elif dx < 0 and dy > 0:
+                        center = [start_xy[0], end_xy[1]]
+                        start_angle = math.pi
+                        end_angle = math.pi * 3/2
+                    elif dx < 0 and dy < 0:
+                        center = [end_xy[0], start_xy[1]]
+                        start_angle = math.pi * 3 / 2
+                        end_angle = math.pi * 2
+                else:
+                    raise ValueError("Curve direction 'dir' must be either 'up' or 'down'")
+
+                pts = generate_turn(center, angle_start=start_angle, angle_end=end_angle)
         if typ == 'curve':
             start_xy = [self.nodes[start_id].x, self.nodes[start_id].y]
             end_xy = [self.nodes[end_id].x, self.nodes[end_id].y]
@@ -90,7 +140,7 @@ def generate_straight(start, end, density=10):
     return [list(p) for p in np.linspace(start, end, count)]
 
     # Create Turning Points
-def generate_turn(center, radius=2.0, angle_start=0, angle_end=math.pi/2, density=20):
+def generate_turn(center, radius=1.2, angle_start=0, angle_end=math.pi/2, density=20):
     if center is None or not isinstance(center, (list, tuple)):
         raise ValueError("center는 [x, y] 형태의 리스트나 튜플이어야 합니다.")
     return [
@@ -103,9 +153,10 @@ def generate_turn(center, radius=2.0, angle_start=0, angle_end=math.pi/2, densit
 class RailVisualizer(Node):
     def __init__(self):
         super().__init__('rail_visualizer')
-        self.publisher = self.create_publisher(Marker, 'rail_marker', 10)
+        self.publisher = self.create_publisher(MarkerArray, 'rail_marker_array', 10)
         self.timer = self.create_timer(1.0, self.publish_markers)
         self.rail_map = self.build_rail_map()
+        self.markers_published = False
 
     def build_rail_map(self):
         rm = RailMap()
@@ -114,7 +165,8 @@ class RailVisualizer(Node):
         slots_col, slots_row = 6,2   # 슬롯 6×2
         blocks_col,blocks_row = 2,3 # 블록 2열×3행
         slot_w, slot_h = 2.3, 5.1
-        gap, margin   = 4.0, 0.5
+        main_road_w = 4.8
+        gap, margin   = 3.4, 0.5
         curve_r       = 1.2
 
         block_w = slots_col*slot_w    # 13.8
@@ -127,185 +179,287 @@ class RailVisualizer(Node):
             for bc in range(blocks_col): # 0, 1
                 block_idx = br*blocks_col + bc
                 zone = blocks_letters[block_idx]
-                x0 = bc*(block_w+gap) # block start point.x
-                y0 = br*(block_h+gap) # block start point.y
+                x0 = bc*(block_w+main_road_w) # block start point.x
+                y0 = -br*(block_h+gap) # block start point.y
                 top_slots_ids = []
                 # 상·하단 노드 for one block
-                for col in range(slots_col+1): # 0-6
+                # Top Node
+                for col in range(slots_col+1): # 0-6 6slots, 7node
                     x_ctr = x0 + col*slot_w
-                    y_ctr = y0 + block_h + margin
+                    y_ctr = y0 + margin
                     slot_num = col + 1
                     node_name = f"{zone}{slot_num}"
-                    nid = rm.add(x_ctr, y_ctr, name = node_name)
+                    nid = rm.add_node(x_ctr, y_ctr, name = node_name)
                     top_slots_ids.append(nid)
-                
+                # Bottom Node
                 bottom_slots_ids = []
-                for col in range(slots_col + 1): # 0-6
-                    x_ctr = x0 + col*slot_w + slot_w/2
+                for col in range(slots_col+1): # 0-6
+                    x_ctr = x0 + col*slot_w
                     y_ctr = y0 - slot_h*slots_row - margin
-                    slot_num = slots_col + (i+1) # 7~
+                    slot_num = slots_col + (col+2) # 8~14
                     node_name = f"{zone}{slot_num}"
                     nid = rm.add_node(x_ctr, y_ctr, name=node_name)
                     bottom_slots_ids.append(nid)
 
                 # 상·하 직선 for one block # Node name : {zone}{slots_col*slots_row +1, +2(left), +3, +4(right)}
-                for i in range(2):
-                    rm.add_node(x0-curve_r, y0 + margin - i*curve_r, f"{zone}{slots_col*slots_row + i + 1}")
-                    rm.add_node(x0+curve_r+slot_w*slots_col, y0 + margin-i*curve_r, f"{zone}{slots_col*slots_row + i + 3}")
-                
+
+                rm.add_node(x0-curve_r, y0 + margin - curve_r, f"{zone}{slots_col*slots_row +  3}")
+                rm.add_node(x0-curve_r, y0 - slot_h*2 - margin + curve_r, f"{zone}{slots_col*slots_row +  4}")
+                rm.add_node(x0+curve_r+slot_w*slots_col, y0 + margin-curve_r, f"{zone}{slots_col*slots_row + 5}")
+                rm.add_node(x0+curve_r+slot_w*slots_col, y0 - slot_h*2 - margin + curve_r, f"{zone}{slots_col*slots_row + 6}")
+
+
         #TODO(2) Define ROAD Node -> Should ADD
         for bc in range(blocks_col):
                 for br in range(blocks_row-1):
                     block_idx = br*blocks_col + bc
                     zone = blocks_letters[block_idx]
-                    x0 = bc(block_w+gap)
-                    y0 = br*(block_h+gap)
+                    x0 = bc*(block_w+main_road_w)
+                    y0 = -br*(block_h+gap)
                     r1_x = x0 - curve_r
                     r1_y = y0 - slot_h*slots_row - gap / 2
                     r2_x = x0 + curve_r + slot_w*slots_col
                     r2_y = r1_y
-                    rm.add_node(r1_x, r1_y, f"{road_zone}{zone}L")
-                    rm.add_node(r2_x, r2_y, f"{road_zone}{zone}R")
-        
+                # Between row
+                    rm.add_node(r1_x, r1_y, f"R{zone}{blocks_letters[block_idx+2]}L")
+                    rm.add_node(r2_x, r2_y, f"R{zone}{blocks_letters[block_idx+2]}R")
+        for bc in range(blocks_col-1): # 0
+            for br in range(blocks_row): # 0, 1, 2
+                # Between col
+                block_idx = br*blocks_col + bc
+                zone = blocks_letters[block_idx]
+                x0 = bc*(block_w+main_road_w)
+                y0 = -br*(block_h+gap)
+                r3_x = x0 +slot_w*slots_col+ main_road_w/2 # Top
+                r3_y = y0 + margin
+                r4_x = x0 + slot_w*slots_col + main_road_w/2
+                r4_y = y0 - slot_h*slots_row - margin
+                rm.add_node(r3_x, r3_y, f"R{zone}{blocks_letters[block_idx+1]}T")
+                rm.add_node(r4_x, r4_y, f"R{zone}{blocks_letters[block_idx+1]}B")
+
+
         #TODO(3) Define EDGE in block
         """
             Edge : {start, end, type}
-            block id : {zone}{int}
+            block id : {zone}{zone}{int}
             road id : R{zone}L, R{zone}R
         """
         slots_possible = slots_row*slots_col
 
         for zone in blocks_letters: # every zone A - F
             # in one blocks
-            for i in range(1, slots_col, 1): # 1 ~ 5
-                rm.add_segment(f"{zone}{i}", f"{zone}{i+1}", "straight") # 1~6
-            for i in range(slots_col+1, slots_possible, 1): # 7 ~ 11
-                rm.add_segment(f"{zone}{i}", f"{zone}{i+1}", "straight") # bottom line
+            for i in range(1, slots_col+1, 1): # 1 ~ 6
+                rm.add_segment(f"{zone}{i}", f"{zone}{i+1}", "straight") # 1~7
+            for i in range(slots_col+2, slots_possible+2, 1): # 8~13
+                rm.add_segment(f"{zone}{i}", f"{zone}{i+1}", "straight") # bottom line 8~14
             # Top-Left curve/Straight
-            rm.add_segment(f"{zone}{slots_possible+1}", f"{zone}{slots_possible+2}", "straight")
-            rm.add_segment(f"{zone}{slots_possible+1}", f"{zone}1", "curve")
+            rm.add_segment(f"{zone}15", f"{zone}16", "straight")
+            rm.add_segment(f"{zone}15", f"{zone}1", "curve", "up")
+            rm.add_segment(f"{zone}16", f"{zone}8", "curve", "down")
+            rm.add_segment(f"{zone}14", f"{zone}18", "curve", "down")
+            rm.add_segment(f"{zone}17", f"{zone}7", "curve", "up")
+            rm.add_segment(f"{zone}17", f"{zone}18", "straight")
 
-            # Bottom-Left Curve
-            rm.add_segment(f"{zone}{slots_possible+2}", f"{zone}7", "curve")
+            '''
+                    slots_col, slots_row = 6,2   # 슬롯 6×2
+                    blocks_col,blocks_row = 2,3 # 블록 2열×3행
+                    slot_w, slot_h = 2.3, 5.1
+                    main_road_w = 4.8
+                    gap, margin   = 3.4, 0.5
+                    curve_r       = 1.2
+            '''
+            # #15
+            # rm.add_segment(f"{zone}{slots_row*slots_col+3}", f"{zone}{slots_row*slots_col+4}", "straight")
+            # rm.add_segment(f"{zone}{slots_row*slots_col+3}", f"{zone}1", "curve", "up")
 
-            # Top-Right curve/Straight
-            rm.add_segment(f"{zone}{slots_possible+3}", f"{zone}{slots_possible+4}", "straight")
-            rm.add_segment(f"{zone}{slots_possible+3}", f"{zone}{slots_possible+4}", "curve")
+            # # Bottom-Left Curve # 16
+            # rm.add_segment(f"{zone}{slots_row*slots_col+4}", f"{zone}{slots_row*slots_col + 2}", "curve", "down")
 
-            # bottom-Right Curve
-            rm.add_segment(f"{zone}{slots_possible+4}", f"{zone}12", "curve")
+            # # Top-Right curve/Straight #17
+            # rm.add_segment(f"{zone}{slots_row*slots_col+5}", f"{zone}{slots_col*slots_row+6}", "straight")
+            # rm.add_segment(f"{zone}{slots_row*slots_col+5}", f"{zone}{slots_col+1}", "curve", "up")
+
+            # # bottom-Right Curve # 14
+            # rm.add_segment(f"{zone}{slots_row*slots_col+2}", f"{zone}{slots_col*slots_row + 6}", "curve", "down")
 
         #TODO(4) : Creating Edge that connecting the Road Node to Block Node (Intersection)
         """
             Edge : Raod - Block
         """
-        for i, zone in enumerate(blocks_letters[:4]):
-            next_zone = i+2
-            rm.add_segment(f"R{zone}L", f"{zone}{slots_col+1}", "curve")
-            rm.add_segment(f"R{zone}L", f"{zone}{slots_possible + 2}", "straight")
-            rm.add_segment(f"R{zone}R", f"{zone}{blocks_letters[i+2]}")
+        for row in range(blocks_row): # 0, 1, 2
+            zone_num = row*blocks_col # 0, 2, 4
+            zone = blocks_letters[zone_num] # A, C, E
+            # Top Rail with zone straight, curve
+            rm.add_segment(f"R{zone}{blocks_letters[zone_num+1]}T", f"{zone}{slots_col*slots_row+5}", "curve", "up")
+            rm.add_segment(f"R{zone}{blocks_letters[zone_num+1]}T", f"{zone}{slots_col+1}", "straight")
+            #rm.add_segment(f"R{zone}{blocks_letters[zone_num+1]}T", f"{blocks_letters[zone_num + 1]}15", "curve", "up") # Problem?
+            rm.add_segment(f"R{zone}{blocks_letters[zone_num+1]}T", f"{blocks_letters[zone_num + 1]}{slots_col*slots_row+3}", "curve", "up") # Problem?
+            rm.add_segment(f"R{zone}{blocks_letters[zone_num+1]}T", f"{blocks_letters[zone_num + 1]}1", "straight")
 
 
+            # Bottom Rail with zone straight, curve
+            rm.add_segment(f"R{zone}{blocks_letters[zone_num+1]}B", f"{zone}{slots_col*slots_row+6}", "curve", "down") # Bottom Road -
+            rm.add_segment(f"R{zone}{blocks_letters[zone_num+1]}B", f"{zone}{slots_col*slots_row +2}", "straight")
+            rm.add_segment(f"R{zone}{blocks_letters[zone_num+1]}B", f"{blocks_letters[zone_num+1]}{slots_col*slots_row+4}", "curve", "down")
+            rm.add_segment(f"R{zone}{blocks_letters[zone_num+1]}B", f"{blocks_letters[zone_num+1]}{slots_col+2}", "straight")
+
+        for col in range(blocks_col): # Every Col 0, 1
+            for row in range(blocks_row-1): # 0, 1
+                    zone_num = col+row*blocks_col # 0, 1, 2, 3
+                    zone = blocks_letters[zone_num] # Current zone # A B C D
+                    if zone_num % blocks_col == 0: # 0, 2 : A C
+                        # Left Rail Road : with Left - Curve Top Block
+                        rm.add_segment(f"R{zone}{blocks_letters[zone_num+blocks_col]}L", f"{zone}{slots_col+2}", "curve", "up") # Road Left - 7 segment
+                        # Left Rail Road : with Left - Straight Top Block
+                        rm.add_segment(f"R{zone}{blocks_letters[zone_num+blocks_col]}L", f"{zone}{slots_col*slots_row+4}", "straight") # Road Left - 14 segment
+                        # Left Rail Road : with Left - Straight : Bottom Block
+                        rm.add_segment(f"R{zone}{blocks_letters[zone_num+blocks_col]}L", f"{blocks_letters[zone_num+blocks_col]}{slots_col*slots_row+3}", "straight") # Road Left - 13 segment
+                        # Left Rail Road : with Left - Curve : Bottom Block
+                        rm.add_segment(f"R{zone}{blocks_letters[zone_num+blocks_col]}L", f"{blocks_letters[zone_num+blocks_col]}1", "curve", "down") # Road Left - 1 segment
+
+                        # Right Rail Load with - Straight Top Block
+                        rm.add_segment(f"R{zone}{blocks_letters[zone_num+blocks_col]}R", f"{zone}{slots_col*slots_row+6}", "straight") # Road Left - 16 segment
+                        # with Bottom - Curve Top Block:Road
+                        rm.add_segment(f"R{zone}{blocks_letters[zone_num+blocks_col]}R", f"R{zone}{blocks_letters[zone_num+1]}B", "curve", "up") # Road Left - 7 segment
+                        # Right Rail Road with Straight - Bottom block
+                        rm.add_segment(f"R{zone}{blocks_letters[zone_num+blocks_col]}R", f"{blocks_letters[zone_num+blocks_col]}{slots_col*slots_row+5}", "straight") # Road Right - Road Bottom of zone segment
+                        # Right Rial Road with Curve - Bottom Block
+                        rm.add_segment(f"R{zone}{blocks_letters[zone_num+blocks_col]}R", f"R{blocks_letters[zone_num+blocks_col]}{blocks_letters[zone_num+blocks_col + 1]}T", "curve", "down") # Road Right - Road bottom of next zone segment
+                        rm.add_segment(f"R{zone}{blocks_letters[zone_num+blocks_col]}R", f"{zone}{slots_col*slots_row+2}", "curve", "up") # Road Right - Road bottom of next zone segment
+                        rm.add_segment(f"R{zone}{blocks_letters[zone_num+blocks_col]}R", f"{blocks_letters[zone_num + blocks_col]}{slots_col+1}", "curve", "down") # Road Right - Road bottom of next zone segment
+                    elif zone_num % blocks_col == blocks_col-1: # 1, 3 # B, D
+                        rm.add_segment(f"R{zone}{blocks_letters[zone_num+blocks_col]}R", f"{zone}{slots_col*slots_row+2}", "curve", "up") # Road Right - 14 segment
+                        # Left Rail Road : with Left - Straight Top Block
+                        rm.add_segment(f"R{zone}{blocks_letters[zone_num+blocks_col]}R", f"{zone}{slots_col*slots_row+6}", "straight") # Road Left - 14 segment
+                        # Left Rail Road : with Left - Straight : Bottom Block
+                        rm.add_segment(f"R{zone}{blocks_letters[zone_num+blocks_col]}R", f"{blocks_letters[zone_num+blocks_col]}{slots_col*slots_row+5}", "straight") # Road Left - 13 segment
+                        # Left Rail Road : with Left - Curve : Bottom Block
+                        rm.add_segment(f"R{zone}{blocks_letters[zone_num+blocks_col]}R", f"{blocks_letters[zone_num+blocks_col]}{slots_col+1}", "curve", "down") # Road Left - 1 segment
+
+                        # Right Rail Load with - Straight Top Block
+                        rm.add_segment(f"R{zone}{blocks_letters[zone_num+blocks_col]}L", f"{zone}{slots_col*slots_row+4}", "straight") # Road Left - 14 segment
+                        # with Bottom - Curve Top Block:Road
+                        rm.add_segment(f"R{zone}{blocks_letters[zone_num+blocks_col]}L", f"R{blocks_letters[zone_num-1]}{blocks_letters[zone_num]}B", "curve", "up") # Road Left - 7 segment #RBCB and RCBB == same thing
+                        # Right Rail Road with Straight - Bottom block
+                        rm.add_segment(f"R{zone}{blocks_letters[zone_num+blocks_col]}L", f"{blocks_letters[zone_num+blocks_col]}{slots_col*slots_row+3}", "straight") # Road Right - Road Bottom of zone segment
+                        # Right Rial Road with Curve - Bottom Block
+                        rm.add_segment(f"R{zone}{blocks_letters[zone_num+blocks_col]}L", f"R{blocks_letters[zone_num+blocks_col-1]}{blocks_letters[zone_num+blocks_col]}T", "curve", "down") # Road Right - Road bottom of next zone segment
+                        rm.add_segment(f"R{zone}{blocks_letters[zone_num+blocks_col]}L", f"{zone}{slots_col+2}", "curve", "up") # Road Right - Road bottom of next zone segment
+                        rm.add_segment(f"R{zone}{blocks_letters[zone_num+blocks_col]}L", f"{blocks_letters[zone_num + blocks_col]}1", "curve", "down") # Road Right - Road bottom of next zone segment
+                    else:
+                        print("Please Check the column")
+            #             rm.add_segment(f"R{zone}{blocks_letters[zone_num+blocks_col]}L", f"{zone}{slots_col*slots_row+4}", "straight") # Road Left - 14 segment
+            #             # with Bottom - Curve Top Block:Road
+            #             rm.add_segment(f"R{zone}{blocks_letters[zone_num+blocks_col]}L", f"R{blocks_letters[zone_num-blocks_col-1]}{zone_num-blocks_col}B", "curve", "up") # Road Left - 7 segment #RBCB and RCBB == same thing
+            #             # Right Rail Road with Straight - Bottom block
+            #             rm.add_segment(f"R{zone}{blocks_letters[zone_num+blocks_col]}L", f"{blocks_letters[zone_num+blocks_col]}{slots_col*slots_row+3}", "straight") # Road Right - Road Bottom of zone segment
+            #             # Right Rial Road with Curve - Bottom Block
+            #             rm.add_segment(f"R{zone}{blocks_letters[zone_num+blocks_col]}L", f"R{blocks_letters[zone_num-1]}{blocks_letters[zone_num]}T", "curve", "down") # Road Right - Road bottom of next zone segment
+            #             rm.add_segment(f"R{zone}{blocks_letters[zone_num+blocks_col]}L", f"{zone}{slots_col+2}", "curve", "up") # Road Right - Road bottom of next zone segment
+            #             rm.add_segment(f"R{zone}{blocks_letters[zone_num+blocks_col]}L", f"{blocks_letters[zone_num + blocks_col]}1", "curve", "down")
+            #                                 # Right Rail Load with - Straight Top Block
+            #             # Right Rail Load with - Straight Top Block
+            #             rm.add_segment(f"R{zone}{blocks_letters[zone_num+blocks_col]}R", f"{zone}{slots_col*slots_row+6}", "straight") # Road Left - 16 segment
+            #             # with Bottom - Curve Top Block:Road
+            #             rm.add_segment(f"R{zone}{blocks_letters[zone_num+blocks_col]}R", f"R{zone}{blocks_letters[zone_num+1]}B", "curve", "up") # Road Left - 7 segment
+            #             # Right Rail Road with Straight - Bottom block
+            #             rm.add_segment(f"R{zone}{blocks_letters[zone_num+blocks_col]}R", f"{blocks_letters[zone_num+blocks_col]}{slots_col*slots_row+5}", "straight") # Road Right - Road Bottom of zone segment
+            #             # Right Rial Road with Curve - Bottom Block
+            #             rm.add_segment(f"R{zone}{blocks_letters[zone_num+blocks_col]}R", f"R{blocks_letters[zone_num+blocks_col]}{blocks_letters[zone_num+blocks_col + 1]}T", "curve", "down") # Road Right - Road bottom of next zone segment
+            #             rm.add_segment(f"R{zone}{blocks_letters[zone_num+blocks_col]}R", f"{zone}{slots_col*slots_row+2}", "curve", "up") # Road Right - Road bottom of next zone segment
+            #             rm.add_segment(f"R{zone}{blocks_letters[zone_num+blocks_col]}R", f"{blocks_letters[zone_num + blocks_col]}{slots_col+1}", "curve", "down") # Road Right - Road bottom of next zone segment
+
+
+        else:
+            print("The column number of blocks is one. Please Set Again")
         #TODO(5) : Edge Generate Straight / Curve Messaging Publishing
         #TODO(6) : Node Publishing
-                rm.add(node)
-                for i in range(slots_col):
-                    rm.add_seg(top_ids[i],   top_ids[i+1],
-                            generate_straight(
-                                [rm.nodes[top_ids[i]].x, rm.nodes[top_ids[i]].y],
-                                [rm.nodes[top_ids[i+1]].x,rm.nodes[top_ids[i+1]].y]),
-                            'straight')
-                    rm.add_seg(bot_ids[i],   bot_ids[i+1],
-                            generate_straight(
-                                [rm.nodes[bot_ids[i]].x, rm.nodes[bot_ids[i]].y],
-                                [rm.nodes[bot_ids[i+1]].x,rm.nodes[bot_ids[i+1]].y]),
-                            'straight')
 
-                # 좌상 필렛
-                c_tl = [ x0-margin+curve_r,   y0+block_h+margin-curve_r ]
-                pts_tl = generate_turn(c_tl,curve_r,math.pi/2,math.pi)
-                n_tl  = add_node(*pts_tl[0])
-                add_seg(top_ids[0],n_tl,pts_tl,'curve')
-                # 좌측 직선
-                end_tl = pts_tl[-1]; n_et = add_node(*end_tl)
-                mid_l  = [x0-margin, y0-margin+curve_r]
-                n_ml   = add_node(*mid_l)
-                add_seg(n_et,n_ml,generate_straight(end_tl,mid_l),'straight')
-                # 좌하 필렛
-                c_bl = [ x0-margin+curve_r, y0-margin+curve_r ]
-                pts_bl = generate_turn(c_bl,curve_r,math.pi,3*math.pi/2)
-                add_seg(n_ml,bot_ids[0],pts_bl,'curve')
-
-                # 우상 필렛
-                c_tr = [ x0+block_w+margin-curve_r, y0+block_h+margin-curve_r ]
-                pts_tr = generate_turn(c_tr,curve_r,0,math.pi/2)
-                n_tr  = add_node(*pts_tr[0])
-                add_seg(top_ids[-1],n_tr,pts_tr,'curve')
-                # 우측 직선
-                end_tr = pts_tr[-1]; n_er = add_node(*end_tr)
-                mid_r  = [x0+block_w+margin, y0-margin+curve_r]
-                n_mr   = add_node(*mid_r)
-                add_seg(n_er,n_mr,generate_straight(end_tr,mid_r),'straight')
-                # 우하 필렛
-                c_br = [ x0+block_w+margin-curve_r, y0-margin+curve_r ]
-                pts_br = generate_turn(c_br,curve_r,3*math.pi/2,2*math.pi)
-                add_seg(n_mr,bot_ids[-1],pts_br,'curve')
+        # print("\n[디버깅: F18 → E17 또는 유사 연결]")
+        # for sid, seg in rm.segments.items():
+        #     s, e = seg.start_node, seg.end_node
+        #     if (s.endswith("18") and e.endswith("17")) or (s.endswith("17") and e.endswith("18")):
+        #         print(f"  {sid}: {s} → {e} ({seg.segment_type})")
+        #         for i, pt in enumerate(seg.points):
+        #             print(f"    pt[{i}] = {pt}")
 
         return rm
-        
+
     def publish_markers(self):
-        marker = Marker()
-        marker.header.frame_id = "map"
-        marker.header.stamp = self.get_clock().now().to_msg()
-        marker.ns = "rail"
-        marker.id = 0
-        marker.type = Marker.LINE_LIST
-        marker.action = Marker.ADD
-        marker.scale.x = 0.05
-        marker.color.r = 1.0
-        marker.color.g = 0.5
-        marker.color.b = 0.0
-        marker.color.a = 1.0
+        if self.markers_published:
+            return
+
+        marker_array = MarkerArray()
+
+        # --- 1. 세그먼트 선분 (LINE_LIST)
+        rail_line = Marker()
+        rail_line.header.frame_id = "map"
+        rail_line.header.stamp = self.get_clock().now().to_msg()
+        rail_line.ns = "rail"
+        rail_line.id = 0
+        rail_line.type = Marker.LINE_LIST
+        rail_line.action = Marker.ADD
+        rail_line.scale.x = 0.05
+        rail_line.color.r = 1.0
+        rail_line.color.g = 0.5
+        rail_line.color.b = 0.0
+        rail_line.color.a = 1.0
 
         for segment in self.rail_map.segments.values():
-            pts = segment.points
-            for i in range(len(pts) - 1):
-                p1 = Point(x=pts[i][0], y=pts[i][1], z=0.02)
-                p2 = Point(x=pts[i+1][0], y=pts[i+1][1], z=0.02)
-                marker.points += [p1, p2]
+            for i in range(len(segment.points) - 1):
+                rail_line.points.append(Point(x=segment.points[i][0], y=segment.points[i][1], z=0.02))
+                rail_line.points.append(Point(x=segment.points[i+1][0], y=segment.points[i+1][1], z=0.02))
+        marker_array.markers.append(rail_line)
 
-        self.publisher.publish(marker)
-        node_m = Marker()
-        node_m.header.frame_id = "map"
-        node_m.header.stamp = self.get_clock().now().to_msg()
-        node_m.ns = "nodes"; node_m.id = 1
-        node_m.type = Marker.SPHERE_LIST; node_m.action = Marker.ADD
-        node_m.scale.x = 0.2  # 구경 0.2m
-        node_m.scale.y = 0.2
-        node_m.scale.z = 0.2
-        node_m.color.r = 0.0; node_m.color.g = 1.0; node_m.color.b = 0.0; node_m.color.a = 1.0
+        # --- 2. 텍스트 마커
+        text_id = 1000
+        for segment in self.rail_map.segments.values():
+            for nid in [segment.start_node, segment.end_node]:
+                node = self.rail_map.nodes[nid]
+                txt = Marker()
+                txt.header.frame_id = "map"
+                txt.header.stamp = self.get_clock().now().to_msg()
+                txt.ns = "edge_labels"
+                txt.id = text_id
+                text_id += 1
+                txt.type = Marker.TEXT_VIEW_FACING
+                txt.action = Marker.ADD
+                txt.scale.z = 0.25
+                txt.color.r = 1.0
+                txt.color.g = 1.0
+                txt.color.b = 0.2
+                txt.color.a = 1.0
+                txt.pose.position.x = node.x
+                txt.pose.position.y = node.y
+                txt.pose.position.z = 0.7
+                txt.text = node.id
+                marker_array.markers.append(txt)
 
+        # --- 3. 노드 점 마커 (원)
+        node_id = 2000
         for node in self.rail_map.nodes.values():
-            node_m.points.append(Point(x=node.x, y=node.y, z=0.05))
-        self.publisher.publish(node_m)
+            dot = Marker()
+            dot.header.frame_id = "map"
+            dot.header.stamp = self.get_clock().now().to_msg()
+            dot.ns = "node_dots"
+            dot.id = node_id
+            node_id += 1
+            dot.type = Marker.CYLINDER
+            dot.action = Marker.ADD
+            dot.scale.x = 0.3
+            dot.scale.y = 0.3
+            dot.scale.z = 0.05
+            dot.color.r = 1.0
+            dot.color.g = 0.0
+            dot.color.b = 0.0
+            dot.color.a = 1.0
+            dot.pose.position.x = node.x
+            dot.pose.position.y = node.y
+            dot.pose.position.z = 0.01
+            marker_array.markers.append(dot)
 
-        # 3) Node labels
-        text_id = 2
-        for node in self.rail_map.nodes.values():
-            txt = Marker()
-            txt.header.frame_id = "map"
-            txt.header.stamp = self.get_clock().now().to_msg()
-            txt.ns = "labels"; txt.id = text_id
-            text_id += 1
-            txt.type = Marker.TEXT_VIEW_FACING
-            txt.action = Marker.ADD
-            txt.scale.z = 0.4            # 글자 크기
-            txt.color.r = 1.0; txt.color.g = 1.0; txt.color.b = 1.0; txt.color.a = 1.0
-            txt.pose.position.x = node.x
-            txt.pose.position.y = node.y
-            txt.pose.position.z = 0.3
-            txt.text = node.id
-            self.publisher.publish(txt)
+        # 한 번에 퍼블리시
+        self.publisher.publish(marker_array)
 def main(args=None):
     rclpy.init(args=args)
     node = RailVisualizer()
