@@ -41,8 +41,8 @@ class ParkingLotVisualizer(Node):
     def publish_markers(self):
         try:
             spot_w, spot_h = 2.3, 5.1
-            block_spacing_x = 5.0
-            block_spacing_y = 5.0
+            block_spacing_x = 4.8
+            block_spacing_y = 3.4
             marker_id = 0
 
             # 주차칸 선(Line List) 마커 생성
@@ -87,64 +87,6 @@ class ParkingLotVisualizer(Node):
             self.marker_pub.publish(line_marker)
             self.get_logger().info("Published parking lot lines as LINE_LIST.")
 
-            # === OHT 레일 + 곡선 교차로 ===
-            rail_marker = Marker()
-            rail_marker.header.frame_id = "map"
-            rail_marker.header.stamp = self.get_clock().now().to_msg()
-            rail_marker.ns = "oht_rails"
-            rail_marker.id = 9999
-            rail_marker.type = Marker.LINE_LIST
-            rail_marker.action = Marker.ADD
-            rail_marker.scale.x = 0.1
-            rail_marker.color.r = 1.0
-            rail_marker.color.g = 0.5
-            rail_marker.color.b = 0.0
-            rail_marker.color.a = 1.0
-            rail_marker.lifetime = Duration(sec=0)
-
-            radius = 2.0
-
-            for row in range(3):
-                for col in range(2):
-                    base_x = col * (spot_w * 6 + block_spacing_x) # two blocks in column
-                    print("base_x", base_x)
-                    base_y = -row * (spot_h * 2 + block_spacing_y)
-                    width = 6 * (spot_w + 0.1)
-                    height = 2 * (spot_h + 0.1)
-
-                    # 블록 외곽 감싸는 레일
-                    margin = 0.3
-                    corners = [
-                        (base_x - margin, base_y + margin),
-                        (base_x + width + margin, base_y + margin),
-                        (base_x + width + margin, base_y - height - margin),
-                        (base_x - margin, base_y - height - margin)
-                    ]
-                    for i in range(4):
-                        self.add_line(rail_marker,
-                                      corners[i][0], corners[i][1],
-                                      corners[(i + 1) % 4][0], corners[(i + 1) % 4][1])
-
-                    # 곡선 위치 계산 (블록의 실제 모서리 바깥쪽)
-                    arc_offset = 0.3 + radius
-                    arcs = [
-                        (base_x - arc_offset, base_y + arc_offset, 180, 270, True),   # 좌상
-                        (base_x + width + arc_offset, base_y + arc_offset, 270, 360, True),  # 우상
-                        (base_x + width + arc_offset, base_y - height - arc_offset, 0, 90, True),  # 우하
-                        (base_x - arc_offset, base_y - height - arc_offset, 90, 180, True)   # 좌하
-                    ]
-                    for cx, cy, start, end, cw in arcs:
-                        self.add_arc(rail_marker, cx, cy, radius, start, end, clockwise=cw)
-
-            # === 공통 수직 레일 (중앙 x값 기준 1줄)
-            center_x = spot_w*6 + block_spacing_x / 2
-            print("center_x",center_x)
-            print("block_spacing_x", block_spacing_x)
-            y_top = 0.0
-            y_bottom = -3 * (spot_h * 2 + block_spacing_y)
-            self.add_line(rail_marker, center_x, y_top, center_x, y_bottom)
-
-            self.marker_pub.publish(rail_marker)
         except Exception as e:
             self.get_logger().error(f"Failed to publish markers: {e}")
 
