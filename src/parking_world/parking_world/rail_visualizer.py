@@ -53,8 +53,6 @@ class RailVisualizer(Node):
         package_path = get_package_share_directory('parking_world')
         json_path = os.path.join(package_path, 'maps', 'rail_map.json')
         self.rail_map = load_rail_map_from_json(json_path)
-        self.get_logger().info(f"📦 JSON 경로: {json_path}")
-        self.get_logger().info(f"📥 nodes: {len(self.rail_map.nodes)}, segments: {len(self.rail_map.segments)}")
         self.markers_published = False
 
     def publish_markers(self):
