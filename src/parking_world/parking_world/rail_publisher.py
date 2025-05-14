@@ -11,7 +11,7 @@ from geometry_msgs.msg import PoseStamped
 import json
 from typing import Optional
 from visualization_msgs.msg import MarkerArray
-
+import os
 class RailNode():
     def __init__(self, id, x, y):
         self.id = id # ex. "A1", "N1" 처럼 고유 식별자
@@ -126,6 +126,7 @@ class RailMap:
             ]
         }, indent=2)
     def save_to_file(self,path):
+        os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, 'w') as f:
             f.write(self.to_json())
 
@@ -460,9 +461,14 @@ class RailVisualizer(Node):
 
         # 한 번에 퍼블리시
         self.publisher.publish(marker_array)
+def save_map_to_file():
+    rail_map = RailVisualizer().build_rail_map()
+    rail_map.save_to_file('rail_map.json')
 def main(args=None):
     rclpy.init(args=args)
     node = RailVisualizer()
+    rail_map = node.build_rail_map()
+    rail_map.save_to_file(os.path.join(os.path.dirname(__file__), 'maps', 'rail_map.json'))    
     rclpy.spin(node)
     rclpy.shutdown()
 

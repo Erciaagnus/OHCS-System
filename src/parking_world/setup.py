@@ -1,5 +1,6 @@
 from setuptools import find_packages, setup
-
+import os
+from glob import glob
 package_name = 'parking_world'
 
 setup(
@@ -10,7 +11,10 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
-        ('share/' + package_name + '/launch', ['launch/map_visualizer_launch.py'])
+        ('share/' + package_name + '/launch', ['launch/map_visualizer_launch.py']),
+        (os.path.join('share', package_name, 'maps'), glob('parking_world/maps/*.json')),
+        ('share/' + package_name + '/rviz', glob('parking_world/rviz/*.rviz')),
+
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -23,6 +27,7 @@ setup(
         'console_scripts': [
             'map_visualizer = parking_world.map_visualizer:main',
             'rail_publisher = parking_world.rail_publisher:main',
+            'rail_visualizer = parking_world.rail_visualizer:main'
         ],
     },
 )
