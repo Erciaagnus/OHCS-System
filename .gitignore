@@ -1,5 +1,28 @@
-## Pre-Build
+# ROS 2 build artifacts
 **/build
-**/devel
-**/logs
-**/.catkin_tools
+**/install
+**/log
+
+# VSCode or other IDE files
+.vscode/
+*.swp
+
+# ROS 1 artifacts (if mixed repo, optional)
+.devel/
+.catkin_tools/
+
+## WORLD File
+**/src/parking_lot/worlds/environment/parking_lot
+**/src/parking_lot/worlds/environment/
+*.jpg
+*.gif
+*.FBX
+*.mtl
+*.obj
+*.blend
+*.fbx
+*.mat
+*.rps
+*.png
+*.tga
+*.zip
