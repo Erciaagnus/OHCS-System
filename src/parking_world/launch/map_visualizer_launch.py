@@ -19,8 +19,8 @@ def generate_launch_description():
         ),
         Node(
             package = 'parking_world',
-            executable='rail_visualizer',
-            name = 'rail_visualizer_node',
+            executable='rail_publisher',
+            name = 'rail_publisher_node',
             output='screen' #setup.py name
         ),
          Node(

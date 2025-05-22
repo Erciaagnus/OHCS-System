@@ -468,8 +468,8 @@ def save_map_to_file():
 def main(args=None):
     rclpy.init(args=args)
     node = RailVisualizer()
-    rail_map = node.build_rail_map()
-    rail_map.save_to_file(os.path.join(os.path.dirname(__file__), 'maps', 'rail_map.json'))    
+    #rail_map = node.build_rail_map()
+    node.rail_map.save_to_file(os.path.join(os.path.dirname(__file__), 'maps', 'rail_map.json'))
     rclpy.spin(node)
     rclpy.shutdown()
 
