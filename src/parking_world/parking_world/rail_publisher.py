@@ -65,12 +65,12 @@ class RailMap:
                 if dir == "up":
                     if dx > 0 and dy > 0:
                         center = [end_xy[0], start_xy[1]]
-                        start_angle = math.pi / 2
-                        end_angle = math.pi
+                        start_angle = math.pi
+                        end_angle = math.pi / 2
                     elif dx > 0 and dy < 0:
                         center = [start_xy[0], end_xy[1]]
-                        start_angle = 0
-                        end_angle = math.pi / 2
+                        start_angle = math.pi / 2
+                        end_angle = 0
                     elif dx < 0 and dy > 0:
                         center = [end_xy[0], start_xy[1]]
                         start_angle = 0
@@ -90,12 +90,12 @@ class RailMap:
                         end_angle = math.pi * 3 / 2
                     elif dx < 0 and dy > 0:
                         center = [start_xy[0], end_xy[1]]
-                        start_angle = math.pi
-                        end_angle = math.pi * 3/2
+                        start_angle = math.pi * 3/2
+                        end_angle = math.pi
                     elif dx < 0 and dy < 0:
                         center = [end_xy[0], start_xy[1]]
-                        start_angle = math.pi * 3 / 2
-                        end_angle = math.pi * 2
+                        start_angle = math.pi * 2
+                        end_angle = math.pi * 3 / 2
                 else:
                     raise ValueError("Curve direction 'dir' must be either 'up' or 'down'")
 
@@ -144,6 +144,7 @@ def generate_straight(start, end, density=10):
 def generate_turn(center, radius=1.2, angle_start=0, angle_end=math.pi/2, density=20):
     if center is None or not isinstance(center, (list, tuple)):
         raise ValueError("center는 [x, y] 형태의 리스트나 튜플이어야 합니다.")
+
     return [
         [center[0] + radius * math.cos(theta),
          center[1] + radius * math.sin(theta)]
