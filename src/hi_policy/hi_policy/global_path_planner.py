@@ -9,6 +9,7 @@ from ament_index_python.packages import get_package_share_directory
 import os
 from collections import defaultdict
 import heapq
+from std_msgs.msg import ColorRGBA
 from parking_world.rail_visualizer import RailNode, RailSegment, RailMap
 def load_rail_map_from_json():
     pkg_path = get_package_share_directory('parking_world')
@@ -121,6 +122,8 @@ class PathPublisher(Node):
     def __init__(self):
         super().__init__('global_path_planner')
         self.publisher = self.create_publisher(Path, '/global_path', 10)
+        self.marker_pub = self.create_publisher(Marker, '/global_path_marker', 10)  # <-- 이 줄 추가 필요!
+
         self.planner = GlobalPlanner()
 
         # ⭐ 처음 한 번만 경로 계산
@@ -136,15 +139,32 @@ class PathPublisher(Node):
             pose.header.frame_id = "map"
             pose.pose.position.x = pt[0]
             pose.pose.position.y = pt[1]
-            pose.pose.position.z = 0.0
+            pose.pose.position.z = 0.05
             self.path_msg.poses.append(pose)
-
+        self.marker_msg = self.build_marker(path_pts)
         # 주기적으로 같은 경로 퍼블리시
         self.timer = self.create_timer(1.0, self.publish_path)
 
+    def build_marker(self, points):
+        marker = Marker()
+        marker.header.frame_id = "map"
+        marker.header.stamp = self.get_clock().now().to_msg()
+        marker.ns = "global_path_marker"
+        marker.id = 0
+        marker.type = Marker.LINE_STRIP
+        marker.action = Marker.ADD
+        marker.scale.x = 0.2  # ✅ 선 굵기 조절
+        marker.color = ColorRGBA(r=1.0, g=0.2, b=0.0, a=1.0)  # 주황색
+
+        for pt in points:
+            marker.points.append(Point(x=pt[0], y=pt[1], z=0.05))  # 위로 띄움
+        return marker
+
     def publish_path(self):
         self.path_msg.header.stamp = self.get_clock().now().to_msg()
+        self.marker_msg.header.stamp = self.get_clock().now().to_msg()
         self.publisher.publish(self.path_msg)
+        self.marker_pub.publish(self.marker_msg)
 # --- Main Entry Point ---
 def main(args=None):
     rclpy.init(args=args)
@@ -157,8 +177,8 @@ def main(args=None):
 
     if path:
         print(f"총 경로 길이: {len(path)}점")
-        for pt in path:
-            print(f"{pt}")
+        #for pt in path:
+            #print(f"{pt}")
     else:
         print("❌ 경로를 찾을 수 없습니다.")
 
