@@ -51,3 +51,7 @@ def run_pairing_detailed(ev_list, charger_list, weights):
         result.append(pair)
 
     return result
+
+def main():
+    #TODO : test Case
+    pass
