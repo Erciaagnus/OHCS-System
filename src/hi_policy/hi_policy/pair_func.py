@@ -1,10 +1,31 @@
 #!/usr/bin/env python3
-#Cost Function: 
+#Cost Function:
+from typing import Tuple, List
+import rclpy
+def estimate_travel_time( user_info:Tuple, charger_info:Tuple):
+    #TODO : Calculate the distance between user and charger
+    return True
+def compute_cost_detailed(user_info, charger_info, weights:List):
+    """
+    functions to compare the costs
+     criteria of cost :
+     Messaging Data file
+        User -> data : {id, pose, request_time}
+        Charger -> : {id, pose, }
+    Args:
+        ev (_type_): _description_
+        charger (_type_): _description_
+        weights (_type_): _description_
 
-def compute_cost_detailed(ev, charger, weights):
-    wait = ev["wait_time"]
-    travel = estimate_travel_time(ev["location"], charger["location"])
-    charge = estimate_charge_time(ev["battery_level"], ev["vehicle_type"], charger["charge_power"])
+    Returns:
+        _type_: _description_
+    """
+    #TODO :
+    # user:  request_time
+    # central computer : current_time - request_time -> wait time
+    wait = rclpy.current_time - user_info["request_time"] # current time func
+    travel = estimate_travel_time(user_info["pose"], charger_info["pose"]) # cal. the distance : cost parameter 1
+    charge = estimate_charge_time(user_info["battery_level"], charger_info["vehicle_type"], charger_info["charge_power"])
 
     total = (
         weights["wait_time"] * wait +
@@ -21,16 +42,27 @@ def compute_cost_detailed(ev, charger, weights):
         }
     }
 
-#Pairing Function: 
+#Pairing Function:
 from scipy.optimize import linear_sum_assignment
 
 def run_pairing_detailed(ev_list, charger_list, weights):
+    """
+
+    Args:
+        ev_list (_type_): _description_
+        charger_list (_type_): _description_
+        weights (_type_): _description_
+
+    Returns:
+        _type_: _description_
+        eg. []
+    """
     cost_matrix = []
     breakdown_matrix = []
 
     for ev in ev_list:
         row = []
-        row_detail = []
+        row_detail = [] #
         for charger in charger_list:
             cost_info = compute_cost_detailed(ev, charger, weights)
             row.append(cost_info["total_cost"])
