@@ -126,12 +126,12 @@ class PathPublisher(Node):
 
         self.planner = GlobalPlanner()
 
-        # ⭐ 처음 한 번만 경로 계산
+        # 처음 한 번만 경로 계산
         start_xy = (10.0, -5.0)
         goal_xy = (30.0, -25.0)
         path_pts = self.planner.plan(start_xy, goal_xy)
 
-        # ✅ Path 메시지 한 번 구성
+        # Path 메시지 한 번 구성
         self.path_msg = Path()
         self.path_msg.header.frame_id = "map"
         for pt in path_pts:

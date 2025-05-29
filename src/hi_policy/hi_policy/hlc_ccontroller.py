@@ -8,17 +8,37 @@ from typing import List, Dict, Tuple
 from rclpy.node import Node
 from std_msgs.msg import String
 from geometry_msgs.msg import Pose
-from planners.global_path_planner import GlobalPlanner
-from UserRequest.msg import UserRequest
+from global_path_planner import GlobalPlanner
+from UserRequest import UserRequest
+from multiple_agent_path import GlobalPathPlanner
+from ament_index_python.packages import get_package_share_directory
+import json
+import os
+from parking_world.rail_visualizer import RailNode, RailSegment, RailMap
+
 """
     hi-level controller
      input: [pair[user_info, charger_info]]
         charger_info : [ pose ]
         user_info : [ pose, request_time ]
         data : waiting queue -> EV_id - Request Pair
-
 """
+
 STATES = ["IDLE", "WAITING", "MOVING","CHARGING", "COMPLETE"]
+def load_rail_map_from_json():
+    pkg_path = get_package_share_directory('parking_world')
+    json_path = os.path.join(pkg_path, 'maps', 'rail_map.json')
+    with open(json_path, 'r') as f:
+        data = json.load(f)
+        # Convert dict to RailMap
+    rail_map = RailMap()
+    for n in data["nodes"]:
+        rail_map.nodes[n["id"]] = RailNode(n["id"], n["x"], n["y"])
+    for s in data["segments"]:
+        rail_map.segments[s["id"]] = RailSegment(
+            s["id"], s["start_node"], s["end_node"], s["points"], s["type"]
+        )
+    return rail_map
 
 class CentralController(Node):
     """
@@ -37,8 +57,10 @@ class CentralController(Node):
         pair_list : [[user_id, ev_id, charger_id]]
 
         """
+        self.rail_map = load_rail_map_from_json()
+        self.graph = GlobalPlanner(self.rail_map)
         self.global_planner = GlobalPlanner() # Find route..
-        self.user_list = []
+        self.user_list = [] # Request Info is stored to this list
         self.charger_list = []
         self.create_subscription(
             UserRequest,
@@ -78,44 +100,11 @@ class CentralController(Node):
                 if self.check_charging_complete(v_id):
                     v_info["state"] = "COMPLETE"
 
-    def assign_path_to_vehicle(self, vehicle_id:str, path: List[str]):
-        self.vehicle_states[vehicle_id] = {
-            "state": "WAITING",
-            "path" : path, # change to segment_id?
-            "current_index":0
-        }
-        eta = self.get_clock().now().nanoseconds * 1e-9
-        safe_margin = 0.5 * self.t_s
-        reserved_path = []
-        conflict_found = False
-
-        for idx, segment in enumerate(path):
-            arrival_time = eta + idx*self.t_s
-            reserved_slots = self.reservation_table.get(segment, [])
-            for t, _ in reserved_slots:
-                if abs(t-arrival_time) < safe_margin:
-                    conflict_found = True
-                    print(f"[RESERVED CONFLICT] {vehicle_id} at {segment} time {arrival_time:.2f}")
-                    break
-            if conflict_found:
-                break
-            else:
-                reserved_path.append((segment, arrival_time))
-        if conflict_found:
-            print(f"[RESERVE FAIL] Vehicle {vehicle_id} could not reserve path.")
-            # [Option A] 대기 시간 삽입 or 경로 재계산을 여기에 삽입 가능
-            return  # 일단 배정 중단
-        # 예약 등록 (충돌 없을 때만)
-        for segment, t in reserved_path:
-            self.reservation_table.setdefault(segment, []).append((t, vehicle_id))
-
-        # FSM 등록
-        self.vehicle_states[vehicle_id] = {
-            "state": "WAITING",
-            "path": path,
-            "current_index": 0
-        }
-        print(f"[RESERVE SUCCESS] Vehicle {vehicle_id} assigned path.")
+    def assign_path_to_vehicle(self, vehicle_pair, vehicle_id:str, path: List[str]):
+        global_path_planner = GlobalPathPlanner()
+        request_time =[vehicle_id, self.user_list["request_time"]]
+        vehicle_pairs = vehicle_pair
+        global_path_planner(self.graph, vehicle_pairs, request_time)
 
     def check_charging_complete(self, vehicle_id:str) -> bool:
         #TODO : condition for completing the charging
