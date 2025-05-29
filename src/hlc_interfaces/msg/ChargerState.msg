@@ -1,0 +1,3 @@
+string charger_id
+geometry_msgs/Pose location
+string status

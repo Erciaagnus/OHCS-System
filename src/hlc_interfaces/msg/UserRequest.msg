@@ -1,0 +1,3 @@
+string user_id
+geometry_msgs/Pose location
+float64 request_time
