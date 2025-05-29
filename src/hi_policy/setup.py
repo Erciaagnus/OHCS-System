@@ -19,11 +19,14 @@ setup(
     maintainer='henricus',
     maintainer_email='henricus0973@korea.ac.kr',
     description='TODO: Package description',
-    license='TODO: License declaration',
+    license='Proprietary',
     tests_require=['pytest'],
     entry_points={
         'console_scripts': [
             'global_path_planner = hi_policy.global_path_planner:main',
+            'ros_user_gui = hi_policy.ros_user_gui:main',
+            'multiple_agent_path = hi_policy.multiple_agent_path:main',
+            'vehicle_visualizer = hi_policy.vehicle_visualizer:main'
         ],
     },
 )
