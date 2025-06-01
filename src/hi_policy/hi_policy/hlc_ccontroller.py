@@ -15,6 +15,7 @@ from ament_index_python.packages import get_package_share_directory
 import json
 import os
 from parking_world.rail_visualizer import RailNode, RailSegment, RailMap
+from hi_policy.multiple_agent_path import CBSNode, HungarianPair, CBSPlanner, HLCPlanner, UserManager, ChargerManager
 
 """
     hi-level controller
@@ -24,7 +25,6 @@ from parking_world.rail_visualizer import RailNode, RailSegment, RailMap
         data : waiting queue -> EV_id - Request Pair
 """
 
-STATES = ["IDLE", "WAITING", "MOVING","CHARGING", "COMPLETE"]
 def load_rail_map_from_json():
     pkg_path = get_package_share_directory('parking_world')
     json_path = os.path.join(pkg_path, 'maps', 'rail_map.json')
@@ -46,40 +46,30 @@ class CentralController(Node):
     This class implements the HLC and provides functionality to handle user and charger state
     and control commands in a cooperative systems
     """
-    def __init__(self, charger_ids: List[int], t_s:float):
-        print(charger_ids, flush = 1)
+    def __init__(self, t_s:float):
         self.t_s = t_s
         # Generate the Global Path the vehicles will follow
-        # Dijkstra Algorithms.
         """
-        user_list : [{user_id, ev_id, location, request_time, priority}]
+        user_list : [{user_id, location, request_time, priority}]
         charger_list : [{charger_id, location, queue: [user_id, ,...]}]
         pair_list : [[user_id, ev_id, charger_id]]
 
         """
+        # Map Setting
         self.rail_map = load_rail_map_from_json()
+        # Graph Setting
         self.graph = GlobalPlanner(self.rail_map)
         self.global_planner = GlobalPlanner() # Find route..
         self.user_list = [] # Request Info is stored to this list
         self.charger_list = []
         self.create_subscription(
             UserRequest,
-            '/user_request',
+            '/user_states',
             self.user_callback,
             10
         )
-        ## FSM + Horizon
-        self.reservation_table: Dict[str, List[Tuple[float, str]]] = {} #node_id -> List of (reserved_time, vehicle_id)
-        self.vehicle_states: Dict[str, Dict] = {}
-        self.timer = self.create_timer(self.t_s, self.step_fsm)
-    def user_callback(self, msg: UserRequest):
-        user_data = {
-            "user_id": msg.user_id,
-            "ev_id":msg.ev_id,
-            "pose" : (msg.pose.position.x, msg.pose.position.y),
-            "request_time": msg.request_time
-        }
-        self.user_list.append(user_data)
+        self.user_manager = UserManager()
+        self.charger_manager = ChargerManager()
 
 ## State Machine
     def update_vehicle_states(self,current_time):
