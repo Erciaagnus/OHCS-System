@@ -1,4 +1,4 @@
-# #!/usr/bin/env python3
+#!/usr/bin/env python3
 from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QPushButton, QLineEdit, QLabel
 import rclpy
 from rclpy.node import Node
@@ -10,7 +10,7 @@ import sys
 class UserRequestPublisher(Node):
     def __init__(self):
         super().__init__('user_request_gui')
-        self.publisher_ = self.create_publisher(UserRequest, 'user_states', 10)
+        self.publisher_ = self.create_publisher(UserRequest, '/user_states', 10)
 
     def publish_request(self, user_id, x, y):
         msg = UserRequest()
@@ -19,7 +19,7 @@ class UserRequestPublisher(Node):
         msg.location.position.x = float(x)
         msg.location.position.y = float(y)
         msg.location.position.z = 0.0
-        now = self.get_clock().now().to_msg()
+        now = self.get_clock().now().nanoseconds / 1e9
         msg.request_time = now
         self.publisher_.publish(msg)
         self.get_logger().info(f"Published: {msg}")
@@ -53,9 +53,10 @@ class App(QWidget):
         self.ros_node.publish_request(uid, x, y)
 
 def main():
+    app = QApplication(sys.argv)
     rclpy.init()
     ros_node = UserRequestPublisher()
-    app = QApplication(sys.argv)
+
     gui = App(ros_node)
     gui.show()
     app.exec()
