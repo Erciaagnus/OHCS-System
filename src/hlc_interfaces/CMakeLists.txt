@@ -18,6 +18,7 @@ find_package(geometry_msgs REQUIRED)
 rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/ChargerState.msg"
   "msg/UserRequest.msg"
+  "msg/ChargerPath.msg"
   DEPENDENCIES geometry_msgs
 
 )

@@ -26,7 +26,8 @@ setup(
             'global_path_planner = hi_policy.global_path_planner:main',
             'ros_user_gui = hi_policy.ros_user_gui:main',
             'multiple_agent_path = hi_policy.multiple_agent_path:main',
-            'vehicle_visualizer = hi_policy.vehicle_visualizer:main'
+            'vehicle_visualizer = hi_policy.vehicle_visualizer:main',
+            'charger_simulator = hi_policy.charger_simulator:main',
         ],
     },
 )
