@@ -10,7 +10,9 @@ from ament_index_python.packages import get_package_share_directory
 from scipy.optimize import linear_sum_assignment
 from rclpy.node import Node
 import rclpy
-from hlc_interfaces.msg import ChargerState, UserRequest
+from hlc_interfaces.msg import ChargerState, UserRequest, ChargerPath
+from geometry_msgs.msg import Pose
+from hi_policy.charger_publisher import Charger
 """
     Message Formation
      User Message : {user_id, ev_id, location, request_time}
@@ -36,15 +38,6 @@ def load_rail_map_from_json():
             s["id"], s["start_node"], s["end_node"], s["points"], s["type"]
         )
     return rail_map
-
-
-    def get_idle_chargers(self) -> List[Dict]:
-        return [
-            {"charger_id": cid, "location:": info["location"]}
-            for cid, info in self.charger_states.items()
-            if info["status"] == "idle"
-        ]
-
 class Constraint:
     def __init__(self, agent: str, time: int, node: str):
         self.agent = agent
@@ -69,16 +62,28 @@ class HungarianPair:
     #TODO(1) : Pair Functions
     """
     Args:
-        User_list -> [{"user_id":  , "location":  , "requeust_time":   }, {      }]
+        User_list -> [{"user_id":  , "location":  , "request_time":   }, {      }]
         Charger_list -> [{"charger_id":  , "location":  , "state" : }, {      }]
 
     Return:
-        pairs = [ ('user_id', 'charger_id' ), ( 'user_id', 'charger_id'), (  )], charge_queus = ['user_id']
+        pairs = [ ('user_id', 'charger_id' ), ( 'user_id', 'charger_id'), (  )], charge_queues = ['user_id']
     """
     def user_ev_pair(self, dist_wgt:float=1.0, time_wgt:float = 0.1) -> List[Tuple[str, str]]:
-        def euclidean(a,b):
-            return ((a[0]-b[0])**2 + (a[1]-b[1])**2)**0.5
-        
+        def euclidean(a, b):
+            def get_xy(p):
+                if hasattr(p, "position"):  # Pose 타입
+                    return p.position.x, p.position.y
+                elif hasattr(p, "x") and hasattr(p, "y"):  # RailNode 타입
+                    return p.x, p.y
+                elif isinstance(p, (tuple, list)):  # 튜플도 처리
+                    return p[0], p[1]
+                else:
+                    raise TypeError("Unsupported type for euclidean distance.")
+
+            ax, ay = get_xy(a)
+            bx, by = get_xy(b)
+            return ((ax - bx) ** 2 + (ay - by) ** 2) ** 0.5
+
         num_users = len(self.user_list)
         num_chargers = len(self.charger_list)
         N = max(num_users, num_chargers)
@@ -117,7 +122,7 @@ class CBSPlanner:
     def __init__(self, rail_map:RailMap, vehicle_pairs,  user_info, charger_info):
         self.rail_map = rail_map
         self.graph = self.build_graph(rail_map)
-        self.vehicle_ids = [f'veh{i}' for i in range(len(vehicle_pairs))]
+        self.vehicle_ids = [f'veh{i}' for i in range(len(vehicle_pairs))] # Pair IDS
         self.vehicle_pairs = dict(zip(self.vehicle_ids, vehicle_pairs))
         self.user = {u['user_id']: u for u in user_info}
         self.charger = {c['charger_id']: c for c in charger_info}
@@ -126,7 +131,7 @@ class CBSPlanner:
             start_node = self.get_closest_node(self.user[uid]['location'])
             goal_node = self.get_closest_node(self.charger[cid]['location'])
             self.vehicle_pairs[vid] = (start_node, goal_node)
-    
+
     # UTILS
     def compute_cost(self, paths: Dict[str, List[str]]) -> int:
         return sum(len(p) for p in paths.values())
@@ -160,7 +165,20 @@ class CBSPlanner:
     # Get Closed Node
     def get_closest_node(self, position: Tuple[float, float]) -> str:
         def euclidean(a, b):
-            return ((a[0] - b[0])**2 + (a[1]-b[1])**2)**0.5
+            def get_xy(p):
+                if hasattr(p, "position"):  # Pose 타입
+                    return p.position.x, p.position.y
+                elif hasattr(p, "x") and hasattr(p, "y"):  # RailNode 타입
+                    return p.x, p.y
+                elif isinstance(p, (tuple, list)):  # 튜플도 처리
+                    return p[0], p[1]
+                else:
+                    raise TypeError("Unsupported type for euclidean distance.")
+
+            ax, ay = get_xy(a)
+            bx, by = get_xy(b)
+            return ((ax - bx) ** 2 + (ay - by) ** 2) ** 0.5
+
         closest = None
         min_dist = float('inf')
         for node in self.rail_map.nodes.values():
@@ -189,6 +207,12 @@ class CBSPlanner:
                 if neighbor not in visited:
                     heapq.heappush(queue, (cost + edge_cost, neighbor, path))
         return []
+    def _get_charger_id_from_goal_node(self, goal_node: str) -> str:
+        for cid, charger in self.charger.items():
+            c_node = self.get_closest_node(charger["location"])
+            if c_node == goal_node:
+                return cid
+        raise ValueError(f"No charger matches node {goal_node}")
 
     # Create the Basic Paths
     def plan_paths(self)-> Dict[str, List[str]]:
@@ -203,7 +227,11 @@ class CBSPlanner:
             node = heapq.heappop(open_list)
             conflict, constraint = self.detect_conflict(node.paths)
             if not conflict:
-                return node.paths
+                # 01.06 correction
+                return {
+                    self._get_charger_id_from_goal_node(self.vehicle_pairs[vid][1]): path
+                    for vid, path in node.paths.items()
+                }
             for agent in [constraint.agent]:
                 new_constraints = node.constraints + [constraint]
                 new_paths = node.paths.copy()
@@ -216,25 +244,59 @@ class CBSPlanner:
                 heapq.heappush(open_list, new_node)
         return {}
 
-class HLCPlanner:
+class HLCPlanner(Node):
     def __init__(self, rail_map:RailMap):
+        super().__init__('HighLevelController')
         self.rail_map = rail_map
         self.user_list = []
         self.charger_list = []
         self.paths = {}
+        self.dispatcher = PathDispatcher()
+        self.user_manager = UserManager(self)
+        self.charger_manager = ChargerManager(self)
+        self.user_sub = self.create_subscription(UserRequest, "/user_states", self.user_callback, 10)
+        self.charger_sub = self.create_subscription(ChargerState, "/charger_states", self.charger_callback, 10)
 
+    def charger_callback(self, msg:ChargerState):
+        # State Store
+        charger_info = {
+            "charger_id": msg.charger_id,
+            "location": msg.location,
+            "status": msg.status
+        } # Message -> Tuple
+        updated = False
+        for i, c in enumerate(self.charger_list):
+            if c["charger_id"] == msg.charger_id:
+                self.charger_list[i] = charger_info
+                updated = True
+                break
+        if not updated:
+            self.charger_list.append(charger_info)
+        self.check_and_pair()
+
+    def user_callback(self, msg: UserRequest):
+        user_info = {
+            "user_id": msg.user_id,
+            "location": msg.location,
+            "request_time": msg.request_time
+        }
+        self.user_list.append(user_info)
+        self.check_and_pair()
 
     def update_users(self, new_users:List[Dict]):
         """
         Args: New Users
-        return : Updated Waiting Queue of User List
+        return : Updated Waiting Queue of User List from UserManager Node
         """
-        self.user_list.extend(new_users)
+        existing_ids = set(u["user_id"] for u in self.user_list)
+        for user in new_users:
+            if user["user_id"] not in existing_ids:
+                self.user_list.append(user)
 
     def update_chargers(self, charger_states:List[Dict]):
         """
         Args : Charger State Message
-        Return : Charger List
+        Return : Charger List updated by ChargerManager Node
         """
         self.charger_list = charger_states
 
@@ -242,7 +304,7 @@ class HLCPlanner:
         idle_chargers = [c for c in self.charger_list if c.get("status") == "idle"]
         if not idle_chargers or not self.user_list:
             return
-        
+
         # Hungarian Pairing
         pairer = HungarianPair(self.user_list, idle_chargers)
         pairs, waiting_queue = pairer.user_ev_pair()
@@ -253,9 +315,49 @@ class HLCPlanner:
         planner = CBSPlanner(self.rail_map, pairs, self.user_list, self.charger_list)
         self.paths = planner.plan_paths()
 
-        # Dispatch and update
-        dispatch_to_vehicles(self.paths)
+        for charger_id, path_node_ids in self.paths.items():
+            path_xy = self._expand_path_to_points(path_node_ids)
+            for charger in self.charger_list:
+                if charger['charger_id'] == charger_id:
+                    charger['status'] = 'busy'
+            self.dispatcher.publishing_path(charger_id, path_xy)
         self.user_list = [u for u in self.user_list if u['user_id'] in waiting_queue]
+
+    def _extract_charger_id(self, agent_id: str) -> str:
+        idx = int(agent_id.replace("veh", "")) # Pair Info ID -> Index Info
+        return self.charger_list[idx]['charger_id']
+
+    def _expand_path_to_points(self, node_ids: List[str]) -> List[Tuple[float, float]]:
+        points = []
+        for i in range(len(node_ids) - 1):
+            seg = self._find_segment_between(node_ids[i], node_ids[i+1])
+            if seg:
+                points.extend(seg.points)
+        return points
+
+    def _find_segment_between(self, start_id: str, end_id: str) -> RailSegment:
+        for seg in self.rail_map.segments.values():
+            if (seg.start_node == start_id and seg.end_node == end_id) or \
+            (seg.start_node == end_id and seg.end_node == start_id):
+                return seg
+        return None
+
+class PathDispatcher(Node):
+    def __init__(self):
+        super().__init__('Dispatcher')
+        self.publisher_ = self.create_publisher(ChargerPath, '/charger_paths', 10)
+    def publishing_path(self, charger_id: str, path_points:List[Tuple[float, float]]):
+        msg = ChargerPath()
+        msg.charger_id = charger_id
+        msg.path = [self._to_pose(x, y) for x, y in path_points]
+        self.publisher_.publish(msg)
+        self.get_logger().info(f"[Dispatched] {charger_id} path with {len(path_points)} points")
+    def _to_pose(self, x:float, y:float) -> Pose:
+        pose = Pose()
+        pose.position.x = x
+        pose.position.y = y
+        pose.position.z = 1.5
+        return pose
 
 # USER MANAGER -> Subscribing Message and Update the User list
 class UserManager(Node):
@@ -281,6 +383,7 @@ class ChargerManager(Node):
         self.charger_states = dict()
         self.create_subscription(ChargerState, '/charger_states', self.state_callback, 10)
         self.hlc = hlc
+
     def state_callback(self, msg):
         self.charger_states[msg.charger_id] = {
             "charger_id" : msg.charger_id,
@@ -302,18 +405,19 @@ def main(args=None):
     rail_map = load_rail_map_from_json()
     hlc = HLCPlanner(rail_map)
 
-    user_manager = UserManager(hlc)
-    charger_manager = ChargerManager(hlc)
-
     executor = rclpy.executors.MultiThreadedExecutor()
-    executor.add_node(user_manager)
-    executor.add_node(charger_manager)
+    executor.add_node(hlc)
+    executor.add_node(hlc.dispatcher)
+    executor.add_node(hlc.user_manager)
+    executor.add_node(hlc.charger_manager)
 
     try:
-        executor.spin()  # ✅ 계속 실행되도록 ROS2 이벤트 루프 진입
+        executor.spin()
     finally:
-        user_manager.destroy_node()
-        charger_manager.destroy_node()
+        hlc.destroy_node()
+        hlc.dispatcher.destroy_node()
+        hlc.user_manager.destroy_node()
+        hlc.charger_manager.destroy_node()
         rclpy.shutdown()
 
 if __name__ == "__main__":
