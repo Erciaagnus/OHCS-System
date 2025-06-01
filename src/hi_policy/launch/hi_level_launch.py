@@ -14,14 +14,20 @@ def generate_launch_description():
         Node(
             package = 'hi_policy',
             executable='multiple_agent_path',
-            name = 'HLC_node',
             output='screen' #setup.py name
 
         ),
+        # Visualize the Charger Info
         Node(
             package = 'hi_policy',
             executable='vehicle_visualizer',
-            name = 'vehicle',
+            output='screen' #setup.py name
+
+        ),
+        # Set Any Initial Information
+        Node(
+            package = 'hi_policy',
+            executable='charger_simulator',
             output='screen' #setup.py name
 
         ),
