@@ -84,9 +84,9 @@ class HungarianPair:
             bx, by = get_xy(b)
             return ((ax - bx) ** 2 + (ay - by) ** 2) ** 0.5
 
-        num_users = len(self.user_list)
-        num_chargers = len(self.charger_list)
-        N = max(num_users, num_chargers)
+        num_users = len(self.user_list) # Number of Users
+        num_chargers = len(self.charger_list) # Number of Chargers
+        N = max(num_users, num_chargers) # Max Num of (Users, Chargers)
 
         # Array of user and charger
         cost_matrix = np.full((N, N), fill_value=1e6)
@@ -100,7 +100,7 @@ class HungarianPair:
         unmatched_users =set(range(num_users))
         for i, j in zip(row_idx, col_idx):
             if i < num_users and j < num_chargers:
-                pairs.append((self.user_list[i]['user_id'], self.charger_list[j]['charger_id']))
+                pairs.append((self.user_list[i]['user_id'], self.charger_list[j]['charger_id'])) # pairs = [[user_id, charger_id], [user_id, charger_id]]
                 unmatched_users.discard(i)
         remaining_users = [self.user_list[i] for i in unmatched_users]
         charger_goals = [pair[1] for pair in pairs]
@@ -127,10 +127,12 @@ class CBSPlanner:
         self.user = {u['user_id']: u for u in user_info}
         self.charger = {c['charger_id']: c for c in charger_info}
         # Position -> Node for Vehicle Pairs
+        self.vid_to_cid = {}
         for vid, (uid, cid) in zip(self.vehicle_ids, vehicle_pairs):
-            start_node = self.get_closest_node(self.user[uid]['location'])
-            goal_node = self.get_closest_node(self.charger[cid]['location'])
-            self.vehicle_pairs[vid] = (start_node, goal_node)
+            goal_node = self.get_closest_node(self.user[uid]['location'])
+            start_node = self.get_closest_node(self.charger[cid]['location'])
+            self.vehicle_pairs[vid] = (start_node, goal_node) # charger_node, user_node
+            self.vid_to_cid[vid] = cid
 
     # UTILS
     def compute_cost(self, paths: Dict[str, List[str]]) -> int:
@@ -152,6 +154,7 @@ class CBSPlanner:
 
     def detect_conflict(self, paths:Dict[str, List[str]]) -> Tuple[bool, Constraint]:
         max_t = max(len(p) for p in paths.values())
+        conflicts = []
         for t in range(max_t):
             node_at_time = defaultdict(list)
             for agent, path, in paths.items():
@@ -160,6 +163,8 @@ class CBSPlanner:
                     node_at_time[node].append(agent)
                 for node, agents in node_at_time.items():
                     if len(agents) > 1:
+                        for a in agents[1:]:
+                            conflicts.append(Constraint(a, t, node))
                         return True, Constraint(agents[1], t, node)
         return False, None
     # Get Closed Node
@@ -219,7 +224,7 @@ class CBSPlanner:
         root_constraints = []
         root_paths = {
             agent : self.dijkstra(start, goal, root_constraints, agent)
-            for agent, (start, goal) in self.vehicle_pairs.items()
+            for agent, (start, goal) in self.vehicle_pairs.items() # pairs info
         } # Basic Path
         root_cost = self.compute_cost(root_paths)
         open_list = [CBSNode(root_paths, root_constraints, root_cost)]
@@ -229,7 +234,7 @@ class CBSPlanner:
             if not conflict:
                 # 01.06 correction
                 return {
-                    self._get_charger_id_from_goal_node(self.vehicle_pairs[vid][1]): path
+                    self.vid_to_cid[vid]: path
                     for vid, path in node.paths.items()
                 }
             for agent in [constraint.agent]:
@@ -254,32 +259,41 @@ class HLCPlanner(Node):
         self.dispatcher = PathDispatcher()
         self.user_manager = UserManager(self)
         self.charger_manager = ChargerManager(self)
+        self.paired_users = set()
         self.user_sub = self.create_subscription(UserRequest, "/user_states", self.user_callback, 10)
         self.charger_sub = self.create_subscription(ChargerState, "/charger_states", self.charger_callback, 10)
 
-    def charger_callback(self, msg:ChargerState):
-        # State Store
-        charger_info = {
-            "charger_id": msg.charger_id,
-            "location": msg.location,
-            "status": msg.status
-        } # Message -> Tuple
+    def charger_callback(self, msg: ChargerState):
         updated = False
-        for i, c in enumerate(self.charger_list):
+        for c in self.charger_list:
             if c["charger_id"] == msg.charger_id:
-                self.charger_list[i] = charger_info
+                c["status"] = msg.status
                 updated = True
                 break
         if not updated:
+            self.get_logger().warn(f"🚨 Charger {msg.charger_id} not found, adding again!")
+
+            charger_info = {
+                "charger_id": msg.charger_id,
+                "location": msg.location,  # 최초 위치 저장
+                "status": msg.status
+            }
             self.charger_list.append(charger_info)
-        self.check_and_pair()
+
+        # # 상태가 IDLE이고 사용자 대기열이 있을 때만 페어링 시도
+        if msg.status == "idle" and self.user_list:
+            self.check_and_pair()
 
     def user_callback(self, msg: UserRequest):
+        if any(u['user_id'] == msg.user_id for u in self.user_list):
+            self.get_logger().warn(f"[UserRequest] Duplicate request from {msg.user_id}, ignoring.")
+            return
         user_info = {
             "user_id": msg.user_id,
             "location": msg.location,
             "request_time": msg.request_time
         }
+        self.get_logger().info(f"[UserRequest] Received from {msg.user_id}")
         self.user_list.append(user_info)
         self.check_and_pair()
 
@@ -304,10 +318,20 @@ class HLCPlanner(Node):
         idle_chargers = [c for c in self.charger_list if c.get("status") == "idle"]
         if not idle_chargers or not self.user_list:
             return
-
+        # 필터링: 이미 페어된 유저 제외
+        unpaired_users = [u for u in self.user_list if u['user_id'] not in self.paired_users]
+        if not unpaired_users:
+            return
         # Hungarian Pairing
         pairer = HungarianPair(self.user_list, idle_chargers)
         pairs, waiting_queue = pairer.user_ev_pair()
+        unique_user_ids = set()
+        filtered_pairs = []
+        for uid, cid in pairs:
+            if uid not in unique_user_ids:
+                filtered_pairs.append((uid, cid))
+                unique_user_ids.add(uid)
+        pairs = filtered_pairs
         if not pairs:
             return
 
@@ -330,10 +354,34 @@ class HLCPlanner(Node):
     def _expand_path_to_points(self, node_ids: List[str]) -> List[Tuple[float, float]]:
         points = []
         for i in range(len(node_ids) - 1):
+            start_id = node_ids[i]
+            end_id = node_ids[i+1]
             seg = self._find_segment_between(node_ids[i], node_ids[i+1])
-            if seg:
-                points.extend(seg.points)
+            if not seg:
+                self.get_logger().warn(f"No segment between {start_id} and {end_id}")
+                continue
+
+            # 방향 판단
+            if seg.start_node == start_id and seg.end_node == end_id:
+                ordered_pts = seg.points
+            elif seg.start_node == end_id and seg.end_node == start_id:
+                ordered_pts = list(reversed(seg.points))
+            else:
+                self.get_logger().warn(f"Segment {seg.id} direction mismatch for {start_id} → {end_id}")
+                continue
+
+            # 중복 제거
+            if points and ordered_pts[0] == points[-1]:
+                points.extend(ordered_pts[1:])
+            else:
+                points.extend(ordered_pts)
         return points
+            # if seg:
+            #     if points and seg.points[0] == points[-1]:
+            #         points.extend(seg.points[1:]) # Avoid Duplicate
+            #     else:
+            #         points.extend(seg.points)
+        # return points
 
     def _find_segment_between(self, start_id: str, end_id: str) -> RailSegment:
         for seg in self.rail_map.segments.values():
@@ -352,6 +400,7 @@ class PathDispatcher(Node):
         msg.path = [self._to_pose(x, y) for x, y in path_points]
         self.publisher_.publish(msg)
         self.get_logger().info(f"[Dispatched] {charger_id} path with {len(path_points)} points")
+
     def _to_pose(self, x:float, y:float) -> Pose:
         pose = Pose()
         pose.position.x = x
@@ -368,6 +417,8 @@ class UserManager(Node):
         self.hlc = hlc
 
     def state_callback(self, msg):
+        if msg.user_id in self.user_states:
+            return
         self.user_states[msg.user_id] = {
             "user_id": msg.user_id,
             "location": msg.location,
