@@ -29,6 +29,7 @@ STATUS = ["idle", "busy"]
 class Charger(Node):
     def __init__(self, charger_id, rail_map, start_node_id):
         super().__init__(f"charger_{charger_id}")
+        self.init_done = False
         self.charger_id = charger_id
         self.rail_map = rail_map
         self.location = self.get_node_position(start_node_id) # Get from the Charger Manager/Message
