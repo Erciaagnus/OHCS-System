@@ -35,6 +35,7 @@ def main(args=None):
 
     # 모든 노드 ID 목록에서 무작위 초기 위치 선택
     all_node_ids = list(rail_map.nodes.keys())
+    random.seed(42)
     selected_nodes = random.sample(all_node_ids, num_chargers)
 
     chargers: List[Charger] = []
