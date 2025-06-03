@@ -13,10 +13,11 @@ import rclpy
 from hlc_interfaces.msg import ChargerState, UserRequest, ChargerPath
 from geometry_msgs.msg import Pose
 from hi_policy.charger_publisher import Charger
+from hi_policy.vehicle_visualizer import GoalVisualizer
 """
     Message Formation
      User Message : {user_id, ev_id, location, request_time}
-     Charger_lsit : {charger_id, location, queue: [user_id, ,,,]}
+     Charger_list : {charger_id, location, queue: [user_id, ,,,]}
      Graph Info : Node, Edge
      Rail Node ' s Method
         1. Node - [ id, x, y ]
@@ -103,7 +104,7 @@ class HungarianPair:
                 pairs.append((self.user_list[i]['user_id'], self.charger_list[j]['charger_id'])) # pairs = [[user_id, charger_id], [user_id, charger_id]]
                 unmatched_users.discard(i)
         remaining_users = [self.user_list[i] for i in unmatched_users]
-        charger_goals = [pair[1] for pair in pairs]
+        charger_goals = [pair[1] for pair in pairs] # goal_node, goal_node id
         charger_goal_map = {cid: loc for cid, loc in zip(
             charger_goals,
             [ch['location'] for ch in self.charger_list if ch['charger_id'] in charger_goals]
@@ -259,6 +260,7 @@ class HLCPlanner(Node):
         self.dispatcher = PathDispatcher()
         self.user_manager = UserManager(self)
         self.charger_manager = ChargerManager(self)
+        self.goal_visualizer = GoalVisualizer()
         self.paired_users = set()
         self.user_sub = self.create_subscription(UserRequest, "/user_states", self.user_callback, 10)
         self.charger_sub = self.create_subscription(ChargerState, "/charger_states", self.charger_callback, 10)
@@ -323,28 +325,48 @@ class HLCPlanner(Node):
         if not unpaired_users:
             return
         # Hungarian Pairing
-        pairer = HungarianPair(self.user_list, idle_chargers)
+        pairer = HungarianPair(unpaired_users, idle_chargers)
         pairs, waiting_queue = pairer.user_ev_pair()
+        # 중복 제거
         unique_user_ids = set()
         filtered_pairs = []
+        if not pairs:
+            return
+
         for uid, cid in pairs:
             if uid not in unique_user_ids:
                 filtered_pairs.append((uid, cid))
                 unique_user_ids.add(uid)
         pairs = filtered_pairs
-        if not pairs:
-            return
+
+        pair_ids = [f'veh{i}' for i in range(len(pairs))]
+        veh_pairs = dict(zip(pair_ids, pairs))
+        self.user = {u['user_id']: u for u in self.user_list}
+
+
+        print(f"user dict keys: {list(self.user.keys())}")
 
         # Path Planning
         planner = CBSPlanner(self.rail_map, pairs, self.user_list, self.charger_list)
         self.paths = planner.plan_paths()
 
+        for vid, (uid, cid) in veh_pairs.items():
+            goal_node = planner.get_closest_node(self.user[uid]['location'])
+            print(f"Visualizing User Location {goal_node}")
+            self.get_logger().info(f"user dict keys: {list(self.user.keys())}")
+            self.get_logger().info(f"veh_pairs: {veh_pairs}")
+            self.get_logger().info(f"Visualizing User Location {goal_node}")
+            self.goal_visualizer.publish_goals(goal_node, self.rail_map)
+
         for charger_id, path_node_ids in self.paths.items():
+            # Visualizing
             path_xy = self._expand_path_to_points(path_node_ids)
             for charger in self.charger_list:
                 if charger['charger_id'] == charger_id:
                     charger['status'] = 'busy'
             self.dispatcher.publishing_path(charger_id, path_xy)
+        for uid, _ in pairs:
+            self.paired_users.add(uid)
         self.user_list = [u for u in self.user_list if u['user_id'] in waiting_queue]
 
     def _extract_charger_id(self, agent_id: str) -> str:
@@ -425,7 +447,7 @@ class UserManager(Node):
             "request_time" : msg.request_time
         }
         self.hlc.update_users(list(self.user_states.values()))
-        self.hlc.check_and_pair()
+        #self.hlc.check_and_pair()
 
 # CHARGER MANAGER -> Subscribing Message and Updat the Charger List and Status
 class ChargerManager(Node):
@@ -442,7 +464,7 @@ class ChargerManager(Node):
             "status" : msg.status
         }
         self.hlc.update_chargers(list(self.charger_states.values()))
-        self.hlc.check_and_pair()
+        #self.hlc.check_and_pair()
 
 def dispatch_to_vehicles(paths: Dict[str, List[str]]):
     print("\n[Final Collision-Free Paths]")
@@ -461,6 +483,7 @@ def main(args=None):
     executor.add_node(hlc.dispatcher)
     executor.add_node(hlc.user_manager)
     executor.add_node(hlc.charger_manager)
+    executor.add_node(hlc.goal_visualizer)
 
     try:
         executor.spin()
@@ -473,15 +496,3 @@ def main(args=None):
 
 if __name__ == "__main__":
     main()
-    # pairer = HungarianPair(users, chargers)
-    # pairs, queues = pairer.user_ev_pair()
-    # planner = CBSPlanner(rail_map, pairs, users, chargers)
-    # result = planner.plan_paths()
-    # print("\n[Paired Users]")
-    # print(pairs)
-    # print("\n[Charger Queues]")
-    # for c, q in queues.items():
-    #     print(f"{c} queue: {q}")
-    # print("\n[Final collision-Free Paths]")
-    # for v, p in result.items():
-    #     print(f"{v}->{p}")
