@@ -48,25 +48,33 @@ class GoalVisualizer(Node):
         super().__init__('user_visualizer')
         self.publisher = self.create_publisher(Marker, '/user_markers', 10)
 
-    def publish_goals(self, goal_nodes: List[str], rail_map: RailMap):
+    def publish_goals(self, goal_nodes: str, rail_map: RailMap):
+        node = rail_map.nodes.get(goal_nodes)
         marker = Marker()
         marker.header.frame_id = "map"
         marker.header.stamp = self.get_clock().now().to_msg()
         marker.ns = "goal_nodes"
         marker.id = 0
-        marker.type = Marker.SPHERE_LIST
+        marker.type = Marker.SPHERE
         marker.action = Marker.ADD
-        marker.scale.x = 0.4
-        marker.scale.y = 0.4
-        marker.scale.z = 0.4
-        marker.color = ColorRGBA(r=0.0, g=1.0, b=0.0, a=1.0)  # 초록색
+        marker.pose.position.x = float(node.x)
+        marker.pose.position.y = float(node.y)
+        marker.pose.position.z = 2.0
+        marker.pose.orientation.w = 1.0
 
-        marker.points = []
-        for node_id in goal_nodes:
-            node = rail_map.nodes.get(node_id)
-            if node:
-                marker.points.append(Point(x=node.x, y=node.y, z=2))
+        marker.scale.x = 0.5
+        marker.scale.y = 0.5
+        marker.scale.z = 2.0
+        marker.color = ColorRGBA(r=0.0, g=1.0, b=0.0, a=1.0)
 
+        self.publisher.publish(marker)
+    def remove_goal(self):
+        marker = Marker()
+        marker.header.frame_id = "map"
+        marker.header.stamp = self.get_clock().now().to_msg()
+        marker.ns = "goal_nodes"
+        marker.id = 0
+        marker.action = Marker.DELETE
         self.publisher.publish(marker)
 def main(args=None):
     rclpy.init(args=args)
