@@ -48,13 +48,13 @@ class GoalVisualizer(Node):
         super().__init__('user_visualizer')
         self.publisher = self.create_publisher(Marker, '/user_markers', 10)
 
-    def publish_goals(self, goal_nodes: str, rail_map: RailMap):
+    def publish_goals(self, uid: str, goal_nodes: str, rail_map: RailMap):
         node = rail_map.nodes.get(goal_nodes)
         marker = Marker()
         marker.header.frame_id = "map"
         marker.header.stamp = self.get_clock().now().to_msg()
         marker.ns = "goal_nodes"
-        marker.id = 0
+        marker.id = hash(uid) % 10000
         marker.type = Marker.SPHERE
         marker.action = Marker.ADD
         marker.pose.position.x = float(node.x)
