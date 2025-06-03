@@ -356,7 +356,7 @@ class HLCPlanner(Node):
             self.get_logger().info(f"user dict keys: {list(self.user.keys())}")
             self.get_logger().info(f"veh_pairs: {veh_pairs}")
             self.get_logger().info(f"Visualizing User Location {goal_node}")
-            self.goal_visualizer.publish_goals(goal_node, self.rail_map)
+            self.goal_visualizer.publish_goals(uid, goal_node, self.rail_map)
 
         for charger_id, path_node_ids in self.paths.items():
             # Visualizing
