@@ -10,6 +10,9 @@ from collections import defaultdict
 import random
 from hlc_interfaces.msg import ChargerState, ChargerPath
 from geometry_msgs.msg import Pose
+import threading
+from low_policy.charger_node import LowPolicy
+"Charger State : {charger_id, location, status, + paired_reqeust_time}"
 def load_rail_map_from_json():
     pkg_path = get_package_share_directory('parking_world')
     json_path = os.path.join(pkg_path, 'maps', 'rail_map.json')
@@ -24,11 +27,12 @@ def load_rail_map_from_json():
             s["id"], s["start_node"], s["end_node"], s["points"], s["type"]
         )
     return rail_map
-STATUS = ["idle", "busy"]
+STATUS = ["idle", "moving", "Pre-Charging", "Charging", "Unplugging", "Connector_Retreat"]
 # Charger Node
 class Charger(Node):
     def __init__(self, charger_id, rail_map, start_node_id):
         super().__init__(f"charger_{charger_id}")
+        self.low_policy = LowPolicy(self, rail_map, self.get_logger()) # self = charger
         self.init_done = False
         self.charger_id = charger_id
         self.rail_map = rail_map
@@ -39,27 +43,38 @@ class Charger(Node):
         self.path = []
         self.path_index = 0
         self.status = "idle"
+        self.priority = 1e9 # Default Priority -> Updated by Path Callback message
+        self.lock = threading.Lock()
 
+        #Low Policy
+        """
+        charger.status : # Updated by LowLevel Policy
+        charger.path : OK Updated by Path Callback Function
+        charger.priority # Updated by Charger Path Callback Function
+        charger.current_pos # Why need?
+        """
+        self.other_chargers: Dict[str, List[Pose]] = {}
+        self.other_priority: Dict[str, float] = {}
+        self.other_paths: Dict[str, ]
+
+        
+        # Message
         self.state_pub = self.create_publisher(ChargerState, "/charger_states", 10)
         self.path_sub = self.create_subscription(ChargerPath, "/charger_paths", self.path_callback, 10)
         self.timer = self.create_timer(0.2, self.step)
 
-    def path_callback(self, msg):
+    def path_callback(self, msg:ChargerPath):
         if msg.charger_id != self.charger_id:
+            self.other_chargers[msg.charger_id] = msg.path # Store other charger paths
+            self.other_priority[msg.charger_id] = round(msg.paired_request_time,2) # Priority : Request Time
             return
-        self.path = [(p.position.x, p.position.y) for p in msg.path]
+        self.path = [(p.position.x, p.position.y) for p in msg.path] # my path
         self.path_index = 0
-        self.status = "busy"
-
-    def step(self):
-        if self.status == "busy" and self.path_index < len(self.path):
-            x, y = self.path[self.path_index]
-            self.pose.position.x = x
-            self.pose.position.y = y
-            self.path_index += 1
-            if self.path_index >= len(self.path):
-                self.status = "idle"
-        self.publish_state() # Update the state at 2D Space
+        if len(self.path) != 0:
+            self.status = "moving" # If Get Charger Paths, Update Status
+        self.get_logger().info(f"Charger {msg.charger_id} status is {self.status}")
+        self.paired_request_time = msg.paired_request_time
+        self.priority = round(msg.paired_request_time, 2) # Priority Defined
 
     def publish_state(self):
         msg = ChargerState()
@@ -71,3 +86,12 @@ class Charger(Node):
     def get_node_position(self, node_id):
         node = self.rail_map.nodes[node_id]
         return (node.x, node.y)
+
+    def step(self):
+        charger = self.low_policy.step_charger()
+        self.charger_id = charger.charger_id
+        self.pose = charger.pose
+        self.status = charger.status
+        self.publish_state() # Update the state at 2D Space
+
+
