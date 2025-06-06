@@ -11,7 +11,7 @@ import time
 import heapq
 import math
 
-CHARGER_RADIUS = 1
+CHARGER_RADIUS = 1.
 class LowPolicy:
     """
     Logic for Controlling the Each Charger
@@ -32,19 +32,34 @@ class LowPolicy:
             charger = self.charger # charger: self
             # No Paths
             # Status Change
-            if not charger.path: # No Paths : State Update
+            # self.logger.info(f"[{charger.charger_id}], status: {charger.status}")
+
+            if charger.status == 'moving' and not charger.path: # No Paths : State Update
                 "No Paths mean : Idle or Moving or Pre-Charging or Unplugging,,"
                 #TODO State Transition -> Should add code after testing,,,
                 # Paired Charger
-                if self.charger.status == 'moving':
-                    self.charger.status = 'pre-charging'
-                elif self.charger.status == 'pre-charging':
+                self.logger.info(f"[{self.charger.charger_id}] is Chagned from Moving to Pre-Charging Status")
+                self.charger.status = 'pre-charging'
+                charger.last_transition_time = time.time()
+            elif self.charger.status == 'pre-charging':
+                if time.time() - self.charger.last_transition_time > 2.0:
+                    self.logger.info(f"[{self.charger.charger_id}] is Chagned from Pre-Charging to Charging Status")
                     self.charger.status = 'charging'
-                elif self.charger.status == 'charging':
+                    self.charger.last_transition_time = time.time()
+            elif self.charger.status == 'charging':
+                if time.time() - self.charger.last_transition_time > 10.0:
+                    self.logger.info(f"[{self.charger.charger_id}] is Chagned from Charging to Unplugging Status")
                     self.charger.status = 'unplugging'
-                elif self.charger.status == 'connector_retreat':
+                    self.charger.last_transition_time = time.time()
+            elif self.charger.status == 'unplugging':
+                if time.time() - self.charger.last_transition_time > 5.0:
+                    self.logger.info(f"[{self.charger.charger_id}] is Chagned from Charging to Unplugging Status")
+                    self.charger.status = 'connector_retreat'
+                    self.charger.last_transition_time = time.time()
+            elif self.charger.status == 'connector_retreat':
+                if time.time() - self.charger.last_transition_time > 5.0:
+                    self.logger.info(f"[{self.charger.charger_id}] is Chagned from Connector_Retreat to Idle Status")
                     self.charger.status = 'idle'
-                return self.charger
 
             #Conflict Detected -> Rerouting or Moving Other Ways
             conflict_detected = self.detect_busy_conflict(horizon=7)
@@ -67,13 +82,33 @@ class LowPolicy:
                         """
                             Self should change the path, Others can't move anywhere
                         """
+                        # Stop -> Path Update
+                        self.charger.path = []
+                        time.sleep(2)
+                        self.logger.info(f"[{self.charger.charger_id}] Conflict with Occupied Charger. Re-routing...")
+
+                        # find current Point : Using Original Path and Current Path Index
+                        curr_pos_x, curr_pos_y = self.charger.path[self.charger.path_index]
+                        # find Near Node
+                        near_node = self.find_closest_node_id(curr_pos_x, curr_pos_y)
+                        # find Re-route
+                        #occupied_nodes = set((round(p.position)))
+                        new_path = self.find_reroute_path(near_node)
+                        self.charger.path = new_path
+                        self.charger.path_index = 0
+
+                        # Step 4. Location[Position] Update
+                        x,y = self.charger.path[self.charger.path_index]
+                        self.charger.pose.position.x = x
+                        self.charger.pose.position.y = y
+                        self.charger.path_index += 1
                         self.charger.status = 'Reroute_Needed'
                         return self.charger
 
                     elif self.charger.status == 'idle' and oc.status == 'moving':
                         #TODO : CASE1 : Self - Idle, Other - Moving
                         """
-                        Same as Case2 but, the role is inveted, Idle(self) should move to free node
+                        Similar to Case2 but, the role is inverted, Idle(self) should move to free node
                         """
                         # We are Idel, let them go, should move aside
                         self.charger.status = 'moving_to_free_node'
@@ -87,6 +122,8 @@ class LowPolicy:
                         self.charger.pose.position.y = y
                         self.charger.path_index += 1
                         return self.charger
+                    else:
+                        return self.charger
                 return self.charger
             #TODO : Moving -> Path Update
             # No conflicts, proceed
@@ -98,14 +135,49 @@ class LowPolicy:
                 if self.charger.path_index >= len(charger.path):
                     self.charger.status = 'pre-charging'
             return self.charger # charger.id, charger.pose, charger.status
-    
 
+    def find_closest_node_id(self, x: float, y: float) -> str:
+        min_dist = float('inf')
+        closest_id = None
+        for node_id, node in self.rail_map.nodes.items():
+            dist = (x - node.x) ** 2 + (y - node.y) ** 2
+            if dist < min_dist:
+                min_dist = dist
+                closest_id = node_id
+        return closest_id
+
+    def find_reroute_path(self, start_node) -> List[Tuple[float, float]]:
+        if not self.charger.path:
+            self.logger.warning("Cannot reroute : Path is Empty.")
+            return []
+        goal_x, goal_y = self.charger.path[-1]
+        goal_node = self.find_closest_node_id(goal_x, goal_y)
+        if start_node is None:
+            curr_x, curr_y = self.charger.path[self.charger.path_index]
+            start_node = self.find_closest_node_id(curr_x, curr_y)
+        blocked = self.get_blocked_nodes()
+        node_path = self.dijkstra(start_node, goal_node, blocked)
+        reroute_pose_path = self.convert_node_path_to_pose_path(node_path)
+        return reroute_pose_path
+
+    def get_blocked_nodes(self) -> set:
+        blocked = set()
+        for charger_id, msg in self.charger.other_chargers.items():
+            if msg.status not in ['pre-charging', 'charging', 'unplugging', 'connector_retreat']:
+                continue
+            x = msg.location.position.x
+            y = msg.location.position.y
+            node_id = self.find_closest_node_id(x, y)
+            blocked.add(node_id)
+        return blocked
+
+    # Case 3        
     def detect_busy_conflict(self, horizon: int=5, threshold : float = CHARGER_RADIUS * 2 ) ->bool:
         """
          Detect Conflict between this charger and others using both charger's future path
         """
         own_future = self.charger.path[:horizon]
-        for charger_id, path in self.charger.other_chargers.items():
+        for charger_id, path in self.charger.other_paths.items():
             if charger_id == self.charger.charger_id:
                 continue
             other_future = path[:horizon]
@@ -118,7 +190,6 @@ class LowPolicy:
                     return True
         return False
 
-
     def find_escape_path(self, free_node: RailNode) -> List[Tuple[float, float]]:
         start_node = self.charger.current_node_id
         goal_node = free_node.id
@@ -129,12 +200,16 @@ class LowPolicy:
             node = self.rail_map.nodes[nid]
             path.append((node.x, node.y))
         return path
+
     def convert_to_pose(self, x: float, y: float) -> Pose:
         p = Pose()
         p.position.x = x
         p.position.y = y
         return p
-    def dijkstra(self, start: str, goal: str) -> List[str]:
+
+    def dijkstra(self, start: str, goal: str, blocked: set=None) -> List[str]:
+        if blocked is None:
+            blocked =set()
         queue = [(0, start, [])]
         visited = set()
         while queue:
@@ -146,7 +221,7 @@ class LowPolicy:
             if current == goal:
                 return path
             for neighbor, edge_cost in self.graph[current]:
-                if neighbor not in visited:
+                if neighbor not in visited and neighbor not in blocked:
                     heapq.heappush(queue, (cost + edge_cost, neighbor, path))
         return []
 
@@ -173,9 +248,9 @@ class LowPolicy:
 
     def find_nearby_free_nodes(self, charger, rail_map : RailMap, threshold: float=2*CHARGER_RADIUS) -> List[RailNode]:
         occupied = set()
-        for msg in self.charger.other_chargers.values():
+        for msg in self.charger.other_paths.values():
             occupied.update((round(p.position.x, 2), round(p.position.y)) for p in msg.path)
-        
+
         curr_pos = charger.current_pos
         min_dist = float('inf')
         best_node_id = None
@@ -196,7 +271,6 @@ class LowPolicy:
         if isinstance(a, Pose): a = (a.position.x, a.position.y)
         if isinstance(b, Pose): b = (b.position.x, b.position.y)
         return ((a[0] - b[0])**2 + (a[1] - b[1])**2)**0.5
-
 
 def main(args=None):
     rclpy.init(args=args)
