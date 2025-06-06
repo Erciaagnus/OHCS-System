@@ -72,10 +72,39 @@ class LowPolicy:
                         The higher Priority Go Path, Lower Priorty wait a moment, Same Priority ->
                         """
                         if self.charger.priority < getattr(oc, 'priority', 1e9): # Request_time = Priority
-                            continue
-                        else:
+                            self.logger.info(f"[{self.charger.charger_id}] has higher priority than {oc.charger_id}. Continue moving.")
+                            continue # Lower Priority Move
+                        elif self.charger.priority > getattr(oc,'priority', 1e9):
                             self.charger.status = 'waiting'
                             return self.charger
+                        else:
+                            if self.charger.charger_id < oc.charger_id:
+                                self.logger.info(f"[{self.charger.charger_id}] priority tie. Continue")
+                                continue
+                            else:
+                                self.logger.info(f"[{self.charger.charger_id}] priority tie. Waits..")
+                                self.charger.status = 'waiting'
+                        if self.charger.status == 'waiting':
+                            if not self.charger.path:
+                                return self.charger
+                            next_pos = self.charger.path[0]
+                            conflict = False
+                            for cid, oc_state in self.charger.other_chargers.items():
+                                if cid == self.charger.charger_id:
+                                    continue
+                                ox = oc_state.location.position.x
+                                oy = oc_state.location.position.y
+                                dx = next_pos[0] - ox
+                                dy = next_pos[1] - oy
+                                dist_sq = dx*dx + dy*dy
+                                if dist_sq < CHARGER_RADIUS*2:
+                                    conflict = True
+                                    break
+                            if not conflict:
+                                self.logger.info(f"[{self.charger.charger_id}] No more conflict. Resume moving.")
+                                self.charger.status = 'moving'
+                            return self.charger
+
 
                     elif self.charger.status == 'moving' and oc.status in ['pre-charging', 'charging', 'unplugging', 'connector_retreat']:
                         #TODO : CASE2 : Self - Moving, Other - Pre-Charging, Charging, Unplugging, Connector Retreat
