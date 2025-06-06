@@ -357,14 +357,33 @@ class HLCPlanner(Node):
             self.get_logger().info(f"veh_pairs: {veh_pairs}")
             self.get_logger().info(f"Visualizing User Location {goal_node}")
             self.goal_visualizer.publish_goals(uid, goal_node, self.rail_map)
+        # only for paired chargers...
+        # for charger_id, path_node_ids in self.paths.items():
+        #     # Visualizing
+        #     path_xy = self._expand_path_to_points(path_node_ids)
+        #     for charger in self.charger_list:
+        #         if charger['charger_id'] == charger_id:
+        #             charger['status'] = 'moving'
+        #     paired_user_id = next((uid for uid, cid in pairs if cid==charger_id), None)
+        #     if paired_user_id:
+        #         request_time = self.user[paired_user_id]['request_time']
+        #     else:
+        #         request_time = 1e10
 
-        for charger_id, path_node_ids in self.paths.items():
-            # Visualizing
+        # for every chargers : Non Paired -> None Path, Paired -> Paired
+        for charger in self.charger_list:
+            charger_id = charger["charger_id"]
+            path_node_ids = self.paths.get(charger_id, [])
             path_xy = self._expand_path_to_points(path_node_ids)
-            for charger in self.charger_list:
-                if charger['charger_id'] == charger_id:
-                    charger['status'] = 'busy'
-            self.dispatcher.publishing_path(charger_id, path_xy)
+            if path_node_ids: 
+                charger["status"] = "moving"
+            paired_user_id = next((uid for uid, cid in pairs if cid == charger_id), None)
+            if paired_user_id:
+                request_time = self.user[paired_user_id]['request_time']
+            else:
+                request_time = 1e10
+
+            self.dispatcher.publishing_path(charger_id, path_xy, request_time)
         for uid, _ in pairs:
             self.paired_users.add(uid)
         self.user_list = [u for u in self.user_list if u['user_id'] in waiting_queue]
@@ -416,11 +435,14 @@ class PathDispatcher(Node):
     def __init__(self):
         super().__init__('Dispatcher')
         self.publisher_ = self.create_publisher(ChargerPath, '/charger_paths', 10)
-    def publishing_path(self, charger_id: str, path_points:List[Tuple[float, float]]):
+
+    def publishing_path(self, charger_id: str, path_points:List[Tuple[float, float]], request_time : float = 1e10):
         msg = ChargerPath()
         msg.charger_id = charger_id
         msg.path = [self._to_pose(x, y) for x, y in path_points]
+        self.paired_request_time = round(request_time, 2)
         self.publisher_.publish(msg)
+
         self.get_logger().info(f"[Dispatched] {charger_id} path with {len(path_points)} points")
 
     def _to_pose(self, x:float, y:float) -> Pose:
@@ -461,7 +483,7 @@ class ChargerManager(Node):
         self.charger_states[msg.charger_id] = {
             "charger_id" : msg.charger_id,
             "location" : msg.location,
-            "status" : msg.status
+            "status" : msg.status,
         }
         self.hlc.update_chargers(list(self.charger_states.values()))
         #self.hlc.check_and_pair()
