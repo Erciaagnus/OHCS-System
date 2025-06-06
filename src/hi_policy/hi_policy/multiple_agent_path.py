@@ -372,8 +372,11 @@ class HLCPlanner(Node):
 
         # for every chargers : Non Paired -> None Path, Paired -> Paired
         for charger in self.charger_list:
-            charger_id = charger["charger_id"]
-            path_node_ids = self.paths.get(charger_id, [])
+            charger_id = charger["charger_id"] # Charger ID
+            if charger["status"] != "moving":
+                path_node_ids = self.paths.get(charger_id, []) # Path Node List, If No Paths -> Replace as [] Empty List
+            else:
+                continue
             path_xy = self._expand_path_to_points(path_node_ids)
             if path_node_ids: 
                 charger["status"] = "moving"
