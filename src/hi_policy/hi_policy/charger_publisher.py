@@ -12,6 +12,7 @@ from hlc_interfaces.msg import ChargerState, ChargerPath
 from geometry_msgs.msg import Pose
 import threading
 from low_policy.charger_node import LowPolicy
+import time
 "Charger State : {charger_id, location, status, + paired_reqeust_time}"
 def load_rail_map_from_json():
     pkg_path = get_package_share_directory('parking_world')
@@ -27,6 +28,7 @@ def load_rail_map_from_json():
             s["id"], s["start_node"], s["end_node"], s["points"], s["type"]
         )
     return rail_map
+
 STATUS = ["idle", "moving", "Pre-Charging", "Charging", "Unplugging", "Connector_Retreat"]
 # Charger Node
 class Charger(Node):
@@ -36,10 +38,14 @@ class Charger(Node):
         self.init_done = False
         self.charger_id = charger_id
         self.rail_map = rail_map
+
+        # Start Position
         self.location = self.get_node_position(start_node_id) # Get from the Charger Manager/Message
         self.pose = Pose()
         # Get Node position
+        # Pose Data Will Be Updated By Low Level Policy and Publish
         self.pose.position.x, self.pose.position.y = self.location
+
         self.path = []
         self.path_index = 0
         self.status = "idle"
@@ -53,19 +59,26 @@ class Charger(Node):
         charger.priority # Updated by Charger Path Callback Function
         charger.current_pos # Why need?
         """
-        self.other_chargers: Dict[str, List[Pose]] = {}
+        self.other_chargers: Dict[str, ChargerState] = {} # State
         self.other_priority: Dict[str, float] = {}
-        self.other_paths: Dict[str, ]
+        self.other_paths: Dict[str, List[Pose]] = {} # Path
+        self.last_transition_time = time.time()
 
-        
         # Message
         self.state_pub = self.create_publisher(ChargerState, "/charger_states", 10)
         self.path_sub = self.create_subscription(ChargerPath, "/charger_paths", self.path_callback, 10)
         self.timer = self.create_timer(0.2, self.step)
+        self.other_state_sub = self.create_subscription(ChargerState, "/charger_states", self.state_callback, 10)
+
+    def state_callback(self, msg:ChargerState):
+        if msg.charger_id == self.charger_id:
+            return
+        # Store Other Charger Info
+        self.other_chargers[msg.charger_id] = msg # Charger_id, charger_location[Pose], Charger Status
 
     def path_callback(self, msg:ChargerPath):
         if msg.charger_id != self.charger_id:
-            self.other_chargers[msg.charger_id] = msg.path # Store other charger paths
+            self.other_paths[msg.charger_id] = msg.path # Store other charger paths
             self.other_priority[msg.charger_id] = round(msg.paired_request_time,2) # Priority : Request Time
             return
         self.path = [(p.position.x, p.position.y) for p in msg.path] # my path
@@ -93,5 +106,3 @@ class Charger(Node):
         self.pose = charger.pose
         self.status = charger.status
         self.publish_state() # Update the state at 2D Space
-
-
