@@ -85,7 +85,7 @@ class ParkingLotVisualizer(Node):
                                 line_marker.points.append(p2)
 
             self.marker_pub.publish(line_marker)
-            self.get_logger().info("Published parking lot lines as LINE_LIST.")
+            #self.get_logger().info("Published parking lot lines as LINE_LIST.")
 
         except Exception as e:
             self.get_logger().error(f"Failed to publish markers: {e}")
